@@ -21,8 +21,8 @@
 #ifndef UTILS_LOG_H_
 #define UTILS_LOG_H_
 
-#include <stdio.h>
 #include <errno.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/syscall.h>
 
@@ -30,22 +30,22 @@
 #define ENABLE_DEBUG_MSG 1
 
 #if ENABLE_DEBUG_MSG
-#define LOG_INFO(M, ...)                                                        \
-                fprintf(stderr, "[INFO]: %s:%d: " M "\n", __FILE__, __LINE__, ##__VA_ARGS__)
+#define LOG_INFO(M, ...)                                                            \
+    fprintf(stderr, "[INFO]: %s:%d: " M "\n", __FILE__, __LINE__, ##__VA_ARGS__)
 
 #else
 #define LOG_INFO(M, ...)
 #endif
 
-#define LOG_ERROR(M, ...)                                                       \
-        fprintf(stderr, "[ERROR] %s:%d: " M "\n", __FILE__, __LINE__, ##__VA_ARGS__)
+#define LOG_ERROR(M, ...)                                                           \
+    fprintf(stderr, "[ERROR] %s:%d: " M "\n", __FILE__, __LINE__, ##__VA_ARGS__)
 
-#define LOG_WARN(M, ...)                                                                \
-        fprintf(stderr, "[WARNING] %s:%d: " M "\n", __FILE__, __LINE__, ##__VA_ARGS__)
+#define LOG_WARN(M, ...)                                                            \
+    fprintf(stderr, "[WARNING] %s:%d: " M "\n", __FILE__, __LINE__, ##__VA_ARGS__)
 
 #if ENABLE_DEBUG_MSG
-#define LOG_DEBUG(M, ...)                                                       \
-        fprintf(stderr, "[DEBUG]: %s:%d: " M "\n", __FILE__, __LINE__, ##__VA_ARGS__)
+#define LOG_DEBUG(M, ...)                                                           \
+    fprintf(stderr, "[DEBUG]: %s:%d: " M "\n", __FILE__, __LINE__, ##__VA_ARGS__)
 #else
 #define LOG_DEBUG(M, ...)
 #endif

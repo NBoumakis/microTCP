@@ -18,47 +18,43 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <unistd.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <signal.h>
+#include <unistd.h>
 
 #include "../lib/microtcp.h"
 #include "../utils/log.h"
 
 static char running = 1;
 
-static void
-sig_handler(int signal)
-{
-  if(signal == SIGINT) {
-    LOG_INFO("Stopping traffic generator client...");
-    running = 0;
-  }
+static void sig_handler(int signal) {
+    if (signal == SIGINT) {
+        LOG_INFO("Stopping traffic generator client...");
+        running = 0;
+    }
 }
 
-int
-main(int argc, char **argv) {
-  uint16_t port;
+int main(int argc, char **argv) {
+    uint16_t port;
 
-  /*
-   * Register a signal handler so we can terminate the client with
-   * Ctrl+C
-   */
-  signal(SIGINT, sig_handler);
+    /*
+     * Register a signal handler so we can terminate the client with
+     * Ctrl+C
+     */
+    signal(SIGINT, sig_handler);
 
-  LOG_INFO("Start receiving traffic from port %u", port);
-  /*TODO: Connect using microtcp_connect() */
-  while(running) {
-    /* TODO: Measure time */
-    /* TODO: Receive using microtcp_recv()*/
-    /* TODO: Measure time */
-    /* TODO: Do other stuff... */
-  }
+    LOG_INFO("Start receiving traffic from port %u", port);
+    /*TODO: Connect using microtcp_connect() */
+    while (running) {
+        /* TODO: Measure time */
+        /* TODO: Receive using microtcp_recv()*/
+        /* TODO: Measure time */
+        /* TODO: Do other stuff... */
+    }
 
-  /* Ctrl+C pressed! Store properly time measurements for plotting */
+    /* Ctrl+C pressed! Store properly time measurements for plotting */
 }
-
