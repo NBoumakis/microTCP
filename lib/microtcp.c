@@ -24,7 +24,7 @@
 microtcp_sock_t x;
 
 microtcp_sock_t microtcp_socket(int domain, int type, int protocol) {
-    /*x.state=UKNOWN;*/
+    /*x.state=UKNOWN; Invalid of failure*/
 
     /*find a number seq_num*/
 
@@ -35,7 +35,8 @@ microtcp_sock_t microtcp_socket(int domain, int type, int protocol) {
 
 int microtcp_bind(microtcp_sock_t *socket, const struct sockaddr *address,
                   socklen_t address_len) {
-    /* Your code here */
+    /* call bind(socket->sd, ...)
+     * socket->state = LISTEN */
 }
 
 int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
@@ -48,7 +49,8 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
     /* Your code here */
 }
 
-int microtcp_shutdown(microtcp_sock_t *socket, int how) { /* Your code here */ }
+int microtcp_shutdown(microtcp_sock_t *socket, int how) { /* Your code here */
+}
 
 ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer, size_t length,
                       int flags) {
