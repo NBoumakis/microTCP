@@ -36,7 +36,8 @@ microtcp_sock_t microtcp_socket(int domain, int type, int protocol) {
 int microtcp_bind(microtcp_sock_t *socket, const struct sockaddr *address,
                   socklen_t address_len) {
     /* call bind(socket->sd, ...)
-     * socket->state = LISTEN */
+     * socket->state = LISTEN
+     * retun 0 unless !bind || socket_invalid */
 }
 
 int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
