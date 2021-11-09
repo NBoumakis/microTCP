@@ -21,10 +21,18 @@
 #include "microtcp.h"
 #include "../utils/crc32.h"
 
+microtcp_sock_t x;
+
 microtcp_sock_t
 microtcp_socket (int domain, int type, int protocol)
 {
-  /* Your code here */
+ /*x.state=UKNOWN;*/
+
+  /*find a number seq_num*/
+
+  /*call system x.sd=socket()*/
+
+  /*rest of fields =0*/
 }
 
 int
