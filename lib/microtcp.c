@@ -45,6 +45,17 @@ int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
                      socklen_t address_len) {
     /**
      *
+     * State checking
+     * Malloc header, assign seq
+     * send(header)
+     * recv(buffer)
+     * header->seq = ((header_t) buffer)->seq
+     * send(header)
+     * recv(buffer)
+     *
+     * setting values
+     *
+     * return
      */
 }
 
