@@ -36,6 +36,7 @@ microtcp_sock_t microtcp_socket(int domain, int type, int protocol) {
 int microtcp_bind(microtcp_sock_t *socket, const struct sockaddr *address,
                   socklen_t address_len) {
     /* call bind(socket->sd, ...)
+     * call listen?
      * socket->state = LISTEN
      * retun 0 unless !bind || socket_invalid */
 }
@@ -47,7 +48,9 @@ int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
 
 int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
                     socklen_t address_len) {
-    /* Your code here */
+    /* call accept(socket->sd, ...)
+     * socket->state = ESTABLISHED
+     * retun 0 unless !bind || socket_invalid */
 }
 
 int microtcp_shutdown(microtcp_sock_t *socket, int how) { /* Your code here */
