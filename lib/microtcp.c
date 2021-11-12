@@ -49,11 +49,11 @@ int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
      * Malloc header, assign seq
      * send(header)
      * recv(buffer)
-     * header->seq = ((header_t) buffer)->seq
+     * header->seq += 1
+     * header->ack = buffer->seq+1
      * send(header)
-     * recv(buffer)
      *
-     * setting values
+     * setting values state= ESTABLISHED
      *
      * return
      */
