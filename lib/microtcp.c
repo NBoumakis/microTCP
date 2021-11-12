@@ -61,9 +61,16 @@ int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
 
 int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
                     socklen_t address_len) {
-    /* call accept(socket->sd, ...)
+    /**
+     * call accept(socket->sd, ...)
+     * receive
+     * socket->ack = buffer->seq+1
+     * socket->seq = random()
+     * send(header)
+     * receive
+     * check
      * socket->state = ESTABLISHED
-     * retun 0 unless !bind || socket_invalid */
+     * return 0 unless !bind || socket_invalid */
 }
 
 int microtcp_shutdown(microtcp_sock_t *socket, int how) { /* Your code here */
