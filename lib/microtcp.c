@@ -73,7 +73,26 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
      * return 0 unless !bind || socket_invalid */
 }
 
-int microtcp_shutdown(microtcp_sock_t *socket, int how) { /* Your code here */
+int microtcp_shutdown(microtcp_sock_t *socket, int how) {
+    /**
+     * if (state==BY_PEER) {
+     *    // Server side confirmed
+     *    send ACK
+     *    send FIN
+     *    recv ACK
+     *    error_checking
+     *    state = CLOSED
+     * } else if (state == ESTABLISHED) {
+     *    // Invoked by client
+     *    send FIN
+     *    recv ACK
+     *    recv FIN
+     *    send ACK
+     *    state = CLOSED
+     * }
+     *
+     * shutdown() // Syscall
+     */
 }
 
 ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer, size_t length,
