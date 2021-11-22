@@ -38,7 +38,7 @@ int microtcp_bind(microtcp_sock_t *socket, const struct sockaddr *address,
     /* call bind(socket->sd, ...)
      * call listen?
      * socket->state = LISTEN
-     * retun 0 unless !bind || socket_invalid */
+     * return 0 unless !bind || socket_invalid */
 }
 
 int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
@@ -64,34 +64,43 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
     /** return 0 unless !bind || socket_invalid */
     ssize_t bytes_recv,length;
     void *buffer; //16bits of Control
+    buffer=(uint16_t)malloc(sizeof(uint16_t)); //allocate memory for buffer to receive
     microtcp_sock_t *sock;
     microtcp_header_t *header;
     if (accept(socket->sd,&address,address_len)!=-1){ //accept calls bind()??
         //call accept(), create a socket from socket() and has address from bind(), returns sd
-        bytes_recv=microtcp_recv(&sock,&buffer,length,0); //receive (SYN=1,seq=N) packet
-        header->control=buffer; //16 bits
-        if (header->control[14]=='1' && header->seq_number==sock->seq_number){ //check SYN==1, seq_number==seq_number header
-            sock->seq_number=random(); //socket->seq=random()
-            sock->ack_number=header->seq_number+1; //socket->ack=buffer->seq+1
-            header->control[14]='1';
-            header->control[12]='1'; //make SYN=1,ACK=1
-            microtcp_send(sock,buffer,length,0); //send(header) SYN,ACK,seq=M,ack=N+1
-            bytes_recv=microtcp_recv(&sock,&buffer,length,0); //ACK, seq=N+1, ack=M+1
-            header->control=buffer;
-            if (header->control[12]=='1' && header->seq_number==sock->seq_number && header->ack_number==sock->ack_number){ 
-                //check ACK==1, seq=N+1, ack=M+1
-                socket->state=ESTABLISHED; //change state to ESTABLISHED
-                return socket->sd; //return the file descriptor of socket
+        if (microtcp_bind(&socket, &address,address_len)==0){ //assign an address to the socket
+            bytes_recv=microtcp_recv(&sock,&buffer,length,0); //receive (SYN=1,seq=N) packet
+            header->control=buffer; //16 bits
+            if (header->control[14]=='1' && header->seq_number==sock->seq_number){ //check SYN==1, seq_number==seq_number header
+                sock->seq_number=random(); //socket->seq=random()
+                sock->ack_number=header->seq_number+1; //socket->ack=buffer->seq+1
+                header->control[14]='1';
+                header->control[12]='1'; //make SYN=1,ACK=1
+                buffer=(uint16_t)malloc(sizeof(uint16_t)); //allocate memory for buffer to send
+                buffer=header->control; //assign header->control to buffer
+                microtcp_send(sock,buffer,length,0); //send(header) SYN,ACK,seq=M,ack=N+1
+                buffer=(uint16_t)malloc(sizeof(uint16_t));
+                bytes_recv=microtcp_recv(&sock,&buffer,length,0); //ACK, seq=N+1, ack=M+1
+                header->control=buffer;
+                if (header->control[12]=='1' && header->seq_number==sock->seq_number && header->ack_number==sock->ack_number){ 
+                    //check ACK==1, seq=N+1, ack=M+1
+                    socket->state=ESTABLISHED; //change state to ESTABLISHED
+                    return socket->sd; //return the file descriptor of socket
+                } else{
+                    printf("Wrong second packet of handshake received by server!"); //error message
+                    return -1; //return -1 for error
+                }
             } else{
-                printf("Wrong packet received by server!"); //error message
+                printf("Wrong first packet of handshake received by server!"); //error message
                 return -1; //return -1 for error
             }
         } else{
-            printf("Wrong packet received to server!"); //error message
+            printf("Bind cannot address a name to the socket!"); //error message
             return -1; //return -1 for error
         }
     } else{
-        printf("Accept() function cannot connect to OS! Error occured!");
+        printf("Accept() function cannot connect to OS!");
         //error message for accept()
         return -1; //return -1 for errors
     }
