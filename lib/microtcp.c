@@ -31,14 +31,26 @@ microtcp_sock_t microtcp_socket(int domain, int type, int protocol) {
     /*call system x.sd=socket()*/
 
     /*rest of fields =0*/
+
+    socket_t.sd=socket(domain,type,protocol);
+    socket_t.seq_number=10;
+    socket_t.state=UNKNOWN;
+    return socket_t;
 }
 
 int microtcp_bind(microtcp_sock_t *socket, const struct sockaddr *address,
                   socklen_t address_len) {
-    /* call bind(socket->sd, ...)
-     * call listen?
-     * socket->state = LISTEN
-     * retun 0 unless !bind || socket_invalid */
+    if(socket->state==INVALID)   
+        return -1;
+
+    
+    if(bind(socket->sd,address,address_len) < 0){
+        return -1;
+    }
+
+    socket->state=LISTEN;
+
+    return 0;
 }
 
 int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
@@ -61,16 +73,76 @@ int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
 
 int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
                     socklen_t address_len) {
-    /**
-     * call accept(socket->sd, ...)
-     * receive
-     * socket->ack = buffer->seq+1
-     * socket->seq = random()
-     * send(header)
-     * receive
-     * check
-     * socket->state = ESTABLISHED
-     * return 0 unless !bind || socket_invalid */
+    uint16_t SYN=1<<13;
+    uint16_t ACK=1<<11;
+    uint16_t SYNACK=SYN | ACK; //SYN=1, ACK=1
+    uint8_t client_seq[4];
+    uint8_t client_ack[4];
+    uint8_t client_control[2];
+    microtcp_header_t *header=( microtcp_header_t * )malloc(sizeof ( microtcp_header_t ) );
+
+    socket->recvbuf=(uint8_t*)malloc(sizeof(uint8_t)*MICROTCP_RECVBUF_LEN);
+    
+
+    if(accept(socket->sd,address,address_len) == -1){
+        printf("Error ,accept()\n");
+        return -1;
+    }
+
+    /*receive*/
+    microtcp_recv(socket, socket->recvbuf, MICROTCP_RECVBUF_LEN,0);
+    client_seq[0]=socket->recvbuf[0]; //seq=N from client
+    client_seq[1]=socket->recvbuf[1];
+    client_seq[2]=socket->recvbuf[2];
+    client_seq[3]=socket->recvbuf[3];
+
+    client_control[0]=socket->recvbuf[8]; //SYN from client
+    client_control[1]=socket->recvbuf[9];
+
+    if (*(uint16_t *)client_control != SYN){
+        printf("Error with SYN, first packet from client!");
+        return 0;
+    }
+
+    //create the header that will sent to client
+    header->seq_number=socket->seq_number;
+    header->ack_number=(*(uint32_t*)client_seq)+1;
+    header->control=SYNACK;
+    header->window=MICROTCP_RECVBUF_LEN;
+    header->data_len=1;
+    header->future_use0=0;
+    header->future_use1=0;
+    header->future_use2=0;
+    header->checksum=0;
+
+    microtcp_send(socket,header,sizeof(header),0); //send packet
+
+    microtcp_recv(socket, socket->recvbuf, MICROTCP_RECVBUF_LEN,0);
+    client_seq[0]=socket->recvbuf[0]; //seq=N from client
+    client_seq[1]=socket->recvbuf[1];
+    client_seq[2]=socket->recvbuf[2];
+    client_seq[3]=socket->recvbuf[3];
+
+    client_ack[0]=socket->recvbuf[4];
+    client_ack[1]=socket->recvbuf[5];
+    client_ack[2]=socket->recvbuf[6];
+    client_ack[3]=socket->recvbuf[7];
+
+    client_control[0]=socket->recvbuf[8]; //SYN from client
+    client_control[1]=socket->recvbuf[9];
+
+    if (*(uint16_t *)client_ack != ACK){
+        printf("Error with ACK,second packet receive from server!");
+    }
+
+    if ((header->seq_number+1) != *(uint32_t*)client_ack){
+        printf("Error with ack sent!");
+        return 0;
+    }
+    if (header->ack_number != *(uint32_t*)client_seq){
+        printf("Error with seq sent!");
+        return 0;
+    }
 }
 
 int microtcp_shutdown(microtcp_sock_t *socket, int how) {
