@@ -20,17 +20,31 @@
 
 #include "microtcp.h"
 #include "../utils/crc32.h"
-
-microtcp_sock_t x;
+#include <netinet/ip.h>
 
 microtcp_sock_t microtcp_socket(int domain, int type, int protocol) {
-    /*x.state=UKNOWN; Invalid of failure*/
+    microtcp_sock_t sock;
+    sock.state = UNKNOWN;
 
     /*find a number seq_num*/
 
-    /*call system x.sd=socket()*/
+    sock.sd = socket(domain, SOCK_DGRAM, IPPROTO_UDP);
 
-    /*rest of fields =0*/
+    if (sock.sd == -1) {
+        sock.state = INVALID;
+    }
+
+    sock.packets_lost = 0;
+    sock.packets_received = 0;
+    sock.packets_send = 0;
+
+    sock.bytes_lost = 0;
+    sock.bytes_received = 0;
+    sock.bytes_send = 0;
+
+    sock.buf_fill_level = 0;
+
+    return sock;
 }
 
 int microtcp_bind(microtcp_sock_t *socket, const struct sockaddr *address,
