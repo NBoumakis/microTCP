@@ -88,25 +88,23 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
 }
 
 int microtcp_shutdown(microtcp_sock_t *socket, int how) {
-    /**
-     * if (state==BY_PEER) {
-     *    // Server side confirmed
-     *    send ACK
-     *    send FIN
-     *    recv ACK
-     *    error_checking
-     *    state = CLOSED
-     * } else if (state == ESTABLISHED) {
-     *    // Invoked by client
-     *    send FIN
-     *    recv ACK
-     *    recv FIN
-     *    send ACK
-     *    state = CLOSED
-     * }
-     *
-     * shutdown() // Syscall
-     */
+    if (socket->state == CLOSING_BY_PEER) {
+        // Server side confirmed
+        /*send ACK
+        send FIN
+        recv ACK
+        error_checking*/
+        socket->state = CLOSED;
+    } else if (socket->state == ESTABLISHED) {
+        // Invoked by client
+        /*send FIN
+        recv ACK
+        recv FIN
+        send ACK*/
+        socket->state = CLOSED;
+    }
+
+    // shutdown(); // Syscall
 }
 
 ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer, size_t length,
