@@ -21,12 +21,16 @@
 #include "microtcp.h"
 #include "../utils/crc32.h"
 #include <netinet/ip.h>
+#include <stdlib.h>
+#include <time.h>
 
 microtcp_sock_t microtcp_socket(int domain, int type, int protocol) {
     microtcp_sock_t sock;
+    srand(time(NULL));
+
     sock.state = UNKNOWN;
 
-    /*find a number seq_num*/
+    sock.seq_number = random();
 
     sock.sd = socket(domain, SOCK_DGRAM, IPPROTO_UDP);
 
