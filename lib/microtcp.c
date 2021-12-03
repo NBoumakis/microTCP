@@ -98,19 +98,34 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
 }
 
 int microtcp_shutdown(microtcp_sock_t *socket, int how) {
+    microtcp_header_t *header = malloc(sizeof(microtcp_header_t));
     if (socket->state == CLOSING_BY_PEER) {
         // Server side confirmed
-        /*send ACK
-        send FIN
-        recv ACK
-        error_checking*/
+        packet_header(header, socket->seq_number, socket->ack_number, 1, 0, 0, 0,
+                      MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
+        microtcp_send(socket, header, sizeof(microtcp_header_t), 0);
+
+        packet_header(header, socket->seq_number, socket->ack_number, 1, 0, 0, 1,
+                      MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
+        microtcp_send(socket, header, sizeof(microtcp_header_t), 0);
+
+        microtcp_recv(socket, header, sizeof(microtcp_header_t), 0);
+
         socket->state = CLOSED;
     } else if (socket->state == ESTABLISHED) {
         // Invoked by client
-        /*send FIN
-        recv ACK
-        recv FIN
-        send ACK*/
+        packet_header(header, socket->seq_number, socket->ack_number, 1, 0, 0, 1,
+                      MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
+        microtcp_send(socket, header, sizeof(microtcp_header_t), 0);
+
+        microtcp_recv(socket, header, sizeof(microtcp_header_t), 0);
+
+        microtcp_recv(socket, header, sizeof(microtcp_header_t), 0);
+
+        packet_header(header, socket->seq_number, socket->ack_number, 1, 0, 0, 0,
+                      MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
+        microtcp_send(socket, header, sizeof(microtcp_header_t), 0);
+
         socket->state = CLOSED;
     }
 
