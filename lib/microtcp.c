@@ -24,11 +24,10 @@
 #include <stdlib.h>
 #include <time.h>
 
-static microtcp_header_t *packet_header(uint32_t seq_number, uint32_t ack_number,
-                                        int ACK, int RST, int SYN, int FIN,
-                                        uint16_t window, uint32_t data_len,
-                                        uint32_t future_use0, uint32_t future_use1,
-                                        uint32_t future_use2, uint32_t checksum);
+static void packet_header(uint32_t seq_number, uint32_t ack_number, int ACK, int RST,
+                          int SYN, int FIN, uint16_t window, uint32_t data_len,
+                          uint32_t future_use0, uint32_t future_use1,
+                          uint32_t future_use2, uint32_t checksum);
 
 microtcp_sock_t microtcp_socket(int domain, int type, int protocol) {
     microtcp_sock_t sock;
@@ -130,11 +129,10 @@ ssize_t microtcp_recv(microtcp_sock_t *socket, void *buffer, size_t length,
 /* Function to create a packet header given its fields. It allocates space for the
  * header and the user is responsible for freeing it. Control parameters ACK, RST,
  * SYN, FIN are treated as booleans */
-static microtcp_header_t *packet_header(uint32_t seq_number, uint32_t ack_number,
-                                        int ACK, int RST, int SYN, int FIN,
-                                        uint16_t window, uint32_t data_len,
-                                        uint32_t future0, uint32_t future1,
-                                        uint32_t future2, uint32_t checksum) {
+static void packet_header(uint32_t seq_number, uint32_t ack_number, int ACK, int RST,
+                          int SYN, int FIN, uint16_t window, uint32_t data_len,
+                          uint32_t future0, uint32_t future1, uint32_t future2,
+                          uint32_t checksum) {
 
     microtcp_header_t *header = malloc(sizeof(microtcp_header_t));
 
