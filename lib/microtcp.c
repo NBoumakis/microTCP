@@ -24,6 +24,12 @@
 #include <stdlib.h>
 #include <time.h>
 
+static microtcp_header_t *packet_header(uint32_t seq_number, uint32_t ack_number,
+                                        int ACK, int RST, int SYN, int FIN,
+                                        uint16_t window, uint32_t data_len,
+                                        uint32_t future_use0, uint32_t future_use1,
+                                        uint32_t future_use2, uint32_t checksum);
+
 microtcp_sock_t microtcp_socket(int domain, int type, int protocol) {
     microtcp_sock_t sock;
     srand(time(NULL));
@@ -119,4 +125,48 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer, size_t length
 ssize_t microtcp_recv(microtcp_sock_t *socket, void *buffer, size_t length,
                       int flags) {
     /* Your code here */
+}
+
+/* Function to create a packet header given its fields. It allocates space for the
+ * header and the user is responsible for freeing it. Control parameters ACK, RST,
+ * SYN, FIN are treated as booleans */
+static microtcp_header_t *packet_header(uint32_t seq_number, uint32_t ack_number,
+                                        int ACK, int RST, int SYN, int FIN,
+                                        uint16_t window, uint32_t data_len,
+                                        uint32_t future0, uint32_t future1,
+                                        uint32_t future2, uint32_t checksum) {
+
+    microtcp_header_t *header = malloc(sizeof(microtcp_header_t));
+
+    if (header != NULL) {
+        return NULL;
+    }
+
+    header->seq_number = seq_number;
+    header->ack_number = ack_number;
+    header->window = window;
+    header->data_len = data_len;
+    header->future_use0 = future0;
+    header->future_use1 = future1;
+    header->future_use2 = future2;
+    header->checksum = checksum;
+
+    header->control = 0;
+    if (ACK) {
+        header->control |= (1 << 12);
+    }
+
+    if (RST) {
+        header->control |= (1 << 13);
+    }
+
+    if (SYN) {
+        header->control |= (1 << 14);
+    }
+
+    if (FIN) {
+        header->control |= (1 << 15);
+    }
+
+    return header;
 }
