@@ -99,37 +99,58 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
 
 int microtcp_shutdown(microtcp_sock_t *socket, int how) {
     microtcp_header_t *header = malloc(sizeof(microtcp_header_t));
+
     if (socket->state == CLOSING_BY_PEER) {
         // Server side confirmed
-        packet_header(header, socket->seq_number, socket->ack_number, 1, 0, 0, 0,
+        packet_header(header, socket->seq_number, socket->ack_number + 1, 1, 0, 0, 0,
                       MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
-        microtcp_send(socket, header, sizeof(microtcp_header_t), 0);
+
+        send(socket, header, sizeof(microtcp_header_t), 0);
+        socket->ack_number += 1;
 
         packet_header(header, socket->seq_number, socket->ack_number, 1, 0, 0, 1,
                       MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
-        microtcp_send(socket, header, sizeof(microtcp_header_t), 0);
+        send(socket, header, sizeof(microtcp_header_t), 0);
 
-        microtcp_recv(socket, header, sizeof(microtcp_header_t), 0);
+        recv(socket, header, sizeof(microtcp_header_t), 0);
+
+        if (socket->ack_number != header->seq_number ||
+            socket->seq_number + 1 != header->ack_number) {
+            free(header);
+            return -1;
+        }
 
         socket->state = CLOSED;
     } else if (socket->state == ESTABLISHED) {
         // Invoked by client
         packet_header(header, socket->seq_number, socket->ack_number, 1, 0, 0, 1,
                       MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
-        microtcp_send(socket, header, sizeof(microtcp_header_t), 0);
+        send(socket, header, sizeof(microtcp_header_t), 0);
 
-        microtcp_recv(socket, header, sizeof(microtcp_header_t), 0);
+        recv(socket, header, sizeof(microtcp_header_t), 0);
 
-        microtcp_recv(socket, header, sizeof(microtcp_header_t), 0);
+        if (socket->seq_number + 1 != header->ack_number) {
+            free(header);
+            return -1;
+        }
+
+        socket->seq_number += 1;
+
+        recv(socket, header, sizeof(microtcp_header_t), 0);
+        socket->ack_number = header->seq_number + 1;
 
         packet_header(header, socket->seq_number, socket->ack_number, 1, 0, 0, 0,
                       MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
-        microtcp_send(socket, header, sizeof(microtcp_header_t), 0);
+        send(socket, header, sizeof(microtcp_header_t), 0);
 
         socket->state = CLOSED;
     }
 
-    // shutdown(); // Syscall
+    free(header);
+    free(socket->recvbuf);
+
+    return 0;
+    // qshutdown(); // Syscall
 }
 
 ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer, size_t length,
