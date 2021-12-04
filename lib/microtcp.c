@@ -157,7 +157,7 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
     free(socket->recvbuf);
 
     return 0;
-    // qshutdown(); // Syscall
+    close(socket->sd); // Syscall
 }
 
 ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer, size_t length,
