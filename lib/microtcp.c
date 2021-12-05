@@ -105,11 +105,7 @@ int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
 
   
     /*elegxos Ack number poy elaba*/
-  
-
-    if( (socket->seq_number+1) != header->ack_number ){
-
-    if( socket->seq_number+1 != header->ack_number) ){
+    if( socket->seq_number+1 != header->ack_number) {
 
         printf("error elegxos ack number\n");
         return -1;
