@@ -43,21 +43,14 @@ int microtcp_bind(microtcp_sock_t *socket, const struct sockaddr *address,
     if(socket->state==INVALID)   
         return -1;
 
-<<<<<<< HEAD
-       
-=======
-    
->>>>>>> f0950adcdc23968210ee34231fbc62990ca6c2b3
+
     if(bind(socket->sd,address,address_len) < 0){
         return -1;
     }
 
-<<<<<<< HEAD
     socket->remote_addr=*address;
     socket->addr_len=address_len;
 
-=======
->>>>>>> f0950adcdc23968210ee34231fbc62990ca6c2b3
     socket->state=LISTEN;
 
     return 0;
@@ -96,29 +89,28 @@ int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
     header->checksum=0;
     
 
-<<<<<<< HEAD
     sendto(socket->sd, header ,sizeof(header),0,&(socket->remote_addr), socket->addr_len);
 
 
     /*receive packet SYN-ACK */
     recvfrom(socket->sd, header, sizeof(header),0,&(socket->remote_addr), &(socket->addr_len));
-=======
+
     send(socket, header ,sizeof(header),0);
 
 
     /*receive packet SYN-ACK */
     recv(socket, header, MICROTCP_RECVBUF_LEN,0);
->>>>>>> f0950adcdc23968210ee34231fbc62990ca6c2b3
+
    
 
   
     /*elegxos Ack number poy elaba*/
   
-<<<<<<< HEAD
+
     if( (socket->seq_number+1) != header->ack_number ){
-=======
+
     if( socket->seq_number+1 != header->ack_number) ){
->>>>>>> f0950adcdc23968210ee34231fbc62990ca6c2b3
+
         printf("error elegxos ack number\n");
         return -1;
     }
@@ -152,11 +144,10 @@ int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
 
  
 
-<<<<<<< HEAD
+
     sendto(socket->sd, header ,sizeof(header),0,&(socket->remote_addr), socket->addr_len);
-=======
+
     send(socket, header ,sizeof(header),0);
->>>>>>> f0950adcdc23968210ee34231fbc62990ca6c2b3
 
     /*o seq_num kai o ack_num mesa sth socket prepei na allajoun*/
     socket->seq_number=socket->seq_number+1;
@@ -167,10 +158,7 @@ int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
     free(header);
 
     return 0;
-<<<<<<< HEAD
-=======
 
->>>>>>> f0950adcdc23968210ee34231fbc62990ca6c2b3
 }
 
 int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
@@ -193,12 +181,12 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
     }
 
     /*receive SYN=1, seq=N HEADER*/
-<<<<<<< HEAD
+
     recvfrom(socket->sd, header, sizeof(header),0,&(socket->remote_addr), &(socket->addr_len));
 
-=======
+
     if (recv(socket, header, MICROTCP_RECVBUF_LEN,0) == -1) return -1;
->>>>>>> f0950adcdc23968210ee34231fbc62990ca6c2b3
+
 
     
     if (header->control != SYN){ //check SYN sent from client
@@ -221,7 +209,7 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
 
     
     /*send SYN=1,ACK=1 from control, seq=M,ack=N+1 HEADER*/
-<<<<<<< HEAD
+
     sendto(socket->sd, header ,sizeof(header),0,&(socket->remote_addr), socket->addr_len);
 
 
@@ -229,13 +217,13 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
     /*receive ACK=1 from control, seq=N+1,ack=M+1 HEADER*/
     recvfrom(socket->sd, header, sizeof(header),0,&(socket->remote_addr), &(socket->addr_len));
 
-=======
+
     if (send(socket,header,sizeof(header),0) == -1) return -1;
 
     
     /*receive ACK=1 from control, seq=N+1,ack=M+1 HEADER*/
     if (recv(socket, header, MICROTCP_RECVBUF_LEN,0) == -1) return -1;
->>>>>>> f0950adcdc23968210ee34231fbc62990ca6c2b3
+
  
     
     if (header->control != ACK){ //check ACK from client, second packet recv
