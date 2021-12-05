@@ -15,8 +15,11 @@
 
 #include "microtcp.h"
 
+<<<<<<< HEAD
 
 
+=======
+>>>>>>> f0950adcdc23968210ee34231fbc62990ca6c2b3
 ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer, size_t length,int flags){
 
     ssize_t x=5;
@@ -226,5 +229,9 @@ int main(){
 
     return 0;
 
+<<<<<<< HEAD
 }
 
+=======
+}
+>>>>>>> f0950adcdc23968210ee34231fbc62990ca6c2b3
