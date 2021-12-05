@@ -63,11 +63,11 @@ typedef struct {
     size_t init_win_size;   /**< The window size negotiated at the 3-way handshake */
     size_t curr_win_size;   /**< The current window size */
 
-    uint8_t *recvbuf;      /**< The *receive* buffer of the TCP
+    uint8_t
+        *recvbuf;          /**< The *receive* buffer of the TCP
                                 connection. It is allocated during the connection
-                                establishment and is freed at the shutdown of the
-                                connection. This buffer is used to retrieve
-                                the data from the network. */
+                              establishment and          is freed at the shutdown of the connection.
+                              This buffer is used          to retrieve the data from the network. */
     size_t buf_fill_level; /**< Amount of data in the buffer */
 
     size_t cwnd;
@@ -81,9 +81,9 @@ typedef struct {
     uint64_t bytes_send;
     uint64_t bytes_received;
     uint64_t bytes_lost;
-
     struct sockaddr remote_addr;
     socklen_t addr_len;
+
 } microtcp_sock_t;
 
 /**
