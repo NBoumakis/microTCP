@@ -20,17 +20,42 @@
 
 #include "microtcp.h"
 #include "../utils/crc32.h"
+#include <netinet/ip.h>
+#include <stdlib.h>
+#include <time.h>
+#include <unistd.h>
 
-microtcp_sock_t x;
+static void packet_header(microtcp_header_t *header, uint32_t seq_number,
+                          uint32_t ack_number, int ACK, int RST, int SYN, int FIN,
+                          uint16_t window, uint32_t data_len, uint32_t future_use0,
+                          uint32_t future_use1, uint32_t future_use2,
+                          uint32_t checksum);
 
 microtcp_sock_t microtcp_socket(int domain, int type, int protocol) {
-    /*x.state=UKNOWN; Invalid of failure*/
+    microtcp_sock_t sock;
+    srand(time(NULL));
 
-    /*find a number seq_num*/
+    sock.state = UNKNOWN;
 
-    /*call system x.sd=socket()*/
+    sock.seq_number = random();
 
-    /*rest of fields =0*/
+    sock.sd = socket(domain, SOCK_DGRAM, IPPROTO_UDP);
+
+    if (sock.sd == -1) {
+        sock.state = INVALID;
+    }
+
+    sock.packets_lost = 0;
+    sock.packets_received = 0;
+    sock.packets_send = 0;
+
+    sock.bytes_lost = 0;
+    sock.bytes_received = 0;
+    sock.bytes_send = 0;
+
+    sock.buf_fill_level = 0;
+
+    return sock;
 }
 
 int microtcp_bind(microtcp_sock_t *socket, const struct sockaddr *address,
@@ -61,62 +86,86 @@ int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
 
 int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
                     socklen_t address_len) {
-    /** return 0 unless !bind || socket_invalid */
-    ssize_t bytes_recv,length;
-    void *buffer; //16bits of Control
-    microtcp_sock_t *sock;
-    microtcp_header_t *header;
-    if (accept(socket->sd,&address,address_len)!=-1){ //accept calls bind()??
-        //call accept(), create a socket from socket() and has address from bind(), returns sd
-        bytes_recv=microtcp_recv(&sock,&buffer,length,0); //receive (SYN=1,seq=N) packet
-        header->control=buffer; //16 bits
-        if (header->control[14]=='1' && header->seq_number==sock->seq_number){ //check SYN==1, seq_number==seq_number header
-            sock->seq_number=random(); //socket->seq=random()
-            sock->ack_number=header->seq_number+1; //socket->ack=buffer->seq+1
-            header->control[14]='1';
-            header->control[12]='1'; //make SYN=1,ACK=1
-            microtcp_send(sock,buffer,length,0); //send(header) SYN,ACK,seq=M,ack=N+1
-            bytes_recv=microtcp_recv(&sock,&buffer,length,0); //ACK, seq=N+1, ack=M+1
-            header->control=buffer;
-            if (header->control[12]=='1' && header->seq_number==sock->seq_number && header->ack_number==sock->ack_number){ 
-                //check ACK==1, seq=N+1, ack=M+1
-                socket->state=ESTABLISHED; //change state to ESTABLISHED
-                return socket->sd; //return the file descriptor of socket
-            } else{
-                printf("Wrong packet received by server!"); //error message
-                return -1; //return -1 for error
-            }
-        } else{
-            printf("Wrong packet received to server!"); //error message
-            return -1; //return -1 for error
-        }
-    } else{
-        printf("Accept() function cannot connect to OS! Error occured!");
-        //error message for accept()
-        return -1; //return -1 for errors
-    }
+    /**
+     * call accept(socket->sd, ...)
+     * receive
+     * socket->ack = buffer->seq+1
+     * socket->seq = random()
+     * send(header)
+     * receive
+     * check
+     * socket->state = ESTABLISHED
+     * return 0 unless !bind || socket_invalid */
 }
 
 int microtcp_shutdown(microtcp_sock_t *socket, int how) {
-    /**
-     * if (state==BY_PEER) {
-     *    // Server side confirmed
-     *    send ACK
-     *    send FIN
-     *    recv ACK
-     *    error_checking
-     *    state = CLOSED
-     * } else if (state == ESTABLISHED) {
-     *    // Invoked by client
-     *    send FIN
-     *    recv ACK
-     *    recv FIN
-     *    send ACK
-     *    state = CLOSED
-     * }
-     *
-     * shutdown() // Syscall
-     */
+    microtcp_header_t *header = malloc(sizeof(microtcp_header_t));
+
+    if (socket->state == CLOSING_BY_PEER) {
+        // Server side confirmed
+        packet_header(header, socket->seq_number, socket->ack_number + 1, 1, 0, 0, 0,
+                      MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
+
+        sendto(socket->sd, header, sizeof(microtcp_header_t), 0,
+               &(socket->remote_addr), socket->addr_len);
+        socket->ack_number += 1;
+
+        packet_header(header, socket->seq_number, socket->ack_number, 1, 0, 0, 1,
+                      MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
+        sendto(socket->sd, header, sizeof(microtcp_header_t), 0,
+               &(socket->remote_addr), socket->addr_len);
+
+        recvfrom(socket->sd, header, sizeof(microtcp_header_t), 0,
+                 &(socket->remote_addr), &(socket->addr_len));
+
+        if (header->control != (1 << 12) ||
+            socket->ack_number != header->seq_number ||
+            socket->seq_number + 1 != header->ack_number) {
+            free(header);
+            return -1;
+        }
+
+        socket->state = CLOSED;
+    } else if (socket->state == ESTABLISHED) {
+        // Invoked by client
+        packet_header(header, socket->seq_number, socket->ack_number, 1, 0, 0, 1,
+                      MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
+        sendto(socket->sd, header, sizeof(microtcp_header_t), 0,
+               &(socket->remote_addr), socket->addr_len);
+
+        recvfrom(socket->sd, header, sizeof(microtcp_header_t), 0,
+                 &(socket->remote_addr), &(socket->addr_len));
+
+        if (header->control != (1 << 12) ||
+            socket->seq_number + 1 != header->ack_number) {
+            free(header);
+            return -1;
+        }
+
+        socket->seq_number += 1;
+
+        recvfrom(socket->sd, header, sizeof(microtcp_header_t), 0,
+                 &(socket->remote_addr), &(socket->addr_len));
+
+        if (header->control != ((1 << 12) | (1 << 15))) {
+            return -1;
+        }
+
+        socket->ack_number = header->seq_number + 1;
+
+        packet_header(header, socket->seq_number, socket->ack_number, 1, 0, 0, 0,
+                      MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
+        sendto(socket->sd, header, sizeof(microtcp_header_t), 0,
+               &(socket->remote_addr), socket->addr_len);
+
+        socket->state = CLOSED;
+    }
+
+    free(header);
+    free(socket->recvbuf);
+
+    return 0;
+    close(socket->sd); // Syscall
 }
 
 ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer, size_t length,
@@ -127,4 +176,39 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer, size_t length
 ssize_t microtcp_recv(microtcp_sock_t *socket, void *buffer, size_t length,
                       int flags) {
     /* Your code here */
+}
+
+/* Function to create a packet header given its fields. The user is responsible for
+ * allocating space for the header and freeing it. Control parameters ACK, RST,
+ * SYN, FIN are treated as booleans */
+static void packet_header(microtcp_header_t *header, uint32_t seq_number,
+                          uint32_t ack_number, int ACK, int RST, int SYN, int FIN,
+                          uint16_t window, uint32_t data_len, uint32_t future0,
+                          uint32_t future1, uint32_t future2, uint32_t checksum) {
+
+    header->seq_number = seq_number;
+    header->ack_number = ack_number;
+    header->window = window;
+    header->data_len = data_len;
+    header->future_use0 = future0;
+    header->future_use1 = future1;
+    header->future_use2 = future2;
+    header->checksum = checksum;
+
+    header->control = 0;
+    if (ACK) {
+        header->control |= (1 << 12);
+    }
+
+    if (RST) {
+        header->control |= (1 << 13);
+    }
+
+    if (SYN) {
+        header->control |= (1 << 14);
+    }
+
+    if (FIN) {
+        header->control |= (1 << 15);
+    }
 }
