@@ -91,13 +91,8 @@ int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
     recvfrom(socket->sd, header, sizeof(header), 0, &(socket->remote_addr),
              &(socket->addr_len));
 
-    send(socket, header, sizeof(header), 0);
-
-    /*receive packet SYN-ACK */
-    recv(socket, header, MICROTCP_RECVBUF_LEN, 0);
-
     /*elegxos Ack number poy elaba*/
-    if (socket->seq_number + 1 != header->ack_number) {
+    if ((socket->seq_number + 1) != header->ack_number) {
         printf("error elegxos ack number\n");
         return -1;
     } else {
@@ -125,8 +120,6 @@ int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
 
     sendto(socket->sd, header, sizeof(header), 0, &(socket->remote_addr),
            socket->addr_len);
-
-    send(socket, header, sizeof(header), 0);
 
     /*o seq_num kai o ack_num mesa sth socket prepei na allajoun*/
     socket->seq_number = socket->seq_number + 1;
