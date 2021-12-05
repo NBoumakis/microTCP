@@ -47,7 +47,8 @@ typedef enum {
     CLOSING_BY_PEER,
     CLOSING_BY_HOST,
     CLOSED,
-    INVALID
+    INVALID,
+    UNKNOWN
 } mircotcp_state_t;
 
 /**
@@ -80,6 +81,9 @@ typedef struct {
     uint64_t bytes_send;
     uint64_t bytes_received;
     uint64_t bytes_lost;
+    struct sockaddr remote_addr;
+    socklen_t addr_len;
+
 } microtcp_sock_t;
 
 /**
