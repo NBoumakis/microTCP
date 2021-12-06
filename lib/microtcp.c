@@ -21,6 +21,7 @@
 #include "microtcp.h"
 #include "../utils/crc32.h"
 #include <netinet/ip.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 #include <unistd.h>
@@ -67,7 +68,7 @@ int microtcp_bind(microtcp_sock_t *socket, const struct sockaddr *address,
         return -1;
     }
 
-    socket->remote_addr = *address;
+    socket->remote_addr = address;
     socket->addr_len = address_len;
 
     socket->state = LISTEN;
@@ -104,11 +105,11 @@ int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
     header->future_use2 = 0;
     header->checksum = 0;
 
-    sendto(socket->sd, header, sizeof(header), 0, &(socket->remote_addr),
+    sendto(socket->sd, header, sizeof(header), 0, socket->remote_addr,
            socket->addr_len);
 
     /*receive packet SYN-ACK */
-    recvfrom(socket->sd, header, sizeof(header), 0, &(socket->remote_addr),
+    recvfrom(socket->sd, header, sizeof(header), 0, socket->remote_addr,
              &(socket->addr_len));
 
     /*elegxos Ack number poy elaba*/
@@ -138,7 +139,7 @@ int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
     header->future_use2 = 0;
     header->checksum = 0;
 
-    sendto(socket->sd, header, sizeof(header), 0, &(socket->remote_addr),
+    sendto(socket->sd, header, sizeof(header), 0, socket->remote_addr,
            socket->addr_len);
 
     /*o seq_num kai o ack_num mesa sth socket prepei na allajoun*/
@@ -172,10 +173,10 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
 
     /*receive SYN=1, seq=N HEADER*/
 
-    recvfrom(socket->sd, header, sizeof(header), 0, &(socket->remote_addr),
+    recvfrom(socket->sd, header, sizeof(header), 0, socket->remote_addr,
              &(socket->addr_len));
 
-    if (recv(socket, header, MICROTCP_RECVBUF_LEN, 0) == -1)
+    if (recv(socket->sd, header, MICROTCP_RECVBUF_LEN, 0) == -1)
         return -1;
 
     if (header->control != SYN) { // check SYN sent from client
@@ -198,18 +199,18 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
 
     /*send SYN=1,ACK=1 from control, seq=M,ack=N+1 HEADER*/
 
-    sendto(socket->sd, header, sizeof(header), 0, &(socket->remote_addr),
+    sendto(socket->sd, header, sizeof(header), 0, socket->remote_addr,
            socket->addr_len);
 
     /*receive ACK=1 from control, seq=N+1,ack=M+1 HEADER*/
-    recvfrom(socket->sd, header, sizeof(header), 0, &(socket->remote_addr),
+    recvfrom(socket->sd, header, sizeof(header), 0, socket->remote_addr,
              &(socket->addr_len));
 
-    if (send(socket, header, sizeof(header), 0) == -1)
+    if (send(socket->sd, header, sizeof(header), 0) == -1)
         return -1;
 
     /*receive ACK=1 from control, seq=N+1,ack=M+1 HEADER*/
-    if (recv(socket, header, MICROTCP_RECVBUF_LEN, 0) == -1)
+    if (recv(socket->sd, header, MICROTCP_RECVBUF_LEN, 0) == -1)
         return -1;
 
     if (header->control != ACK) { // check ACK from client, second packet recv
@@ -242,17 +243,17 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
         packet_header(header, socket->seq_number, socket->ack_number + 1, 1, 0, 0, 0,
                       MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
 
-        sendto(socket->sd, header, sizeof(microtcp_header_t), 0,
-               &(socket->remote_addr), socket->addr_len);
+        sendto(socket->sd, header, sizeof(microtcp_header_t), 0, socket->remote_addr,
+               socket->addr_len);
         socket->ack_number += 1;
 
         packet_header(header, socket->seq_number, socket->ack_number, 1, 0, 0, 1,
                       MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
-        sendto(socket->sd, header, sizeof(microtcp_header_t), 0,
-               &(socket->remote_addr), socket->addr_len);
+        sendto(socket->sd, header, sizeof(microtcp_header_t), 0, socket->remote_addr,
+               socket->addr_len);
 
         recvfrom(socket->sd, header, sizeof(microtcp_header_t), 0,
-                 &(socket->remote_addr), &(socket->addr_len));
+                 socket->remote_addr, &(socket->addr_len));
 
         if (header->control != (1 << 12) ||
             socket->ack_number != header->seq_number ||
@@ -266,11 +267,11 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
         // Invoked by client
         packet_header(header, socket->seq_number, socket->ack_number, 1, 0, 0, 1,
                       MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
-        sendto(socket->sd, header, sizeof(microtcp_header_t), 0,
-               &(socket->remote_addr), socket->addr_len);
+        sendto(socket->sd, header, sizeof(microtcp_header_t), 0, socket->remote_addr,
+               socket->addr_len);
 
         recvfrom(socket->sd, header, sizeof(microtcp_header_t), 0,
-                 &(socket->remote_addr), &(socket->addr_len));
+                 socket->remote_addr, &(socket->addr_len));
 
         if (header->control != (1 << 12) ||
             socket->seq_number + 1 != header->ack_number) {
@@ -281,7 +282,7 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
         socket->seq_number += 1;
 
         recvfrom(socket->sd, header, sizeof(microtcp_header_t), 0,
-                 &(socket->remote_addr), &(socket->addr_len));
+                 socket->remote_addr, &(socket->addr_len));
 
         if (header->control != ((1 << 12) | (1 << 15))) {
             return -1;
@@ -291,8 +292,8 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
 
         packet_header(header, socket->seq_number, socket->ack_number, 1, 0, 0, 0,
                       MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
-        sendto(socket->sd, header, sizeof(microtcp_header_t), 0,
-               &(socket->remote_addr), socket->addr_len);
+        sendto(socket->sd, header, sizeof(microtcp_header_t), 0, socket->remote_addr,
+               socket->addr_len);
 
         socket->state = CLOSED;
     }
