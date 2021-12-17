@@ -263,8 +263,14 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
         }
 
         socket->state = CLOSED;
+
+        free(socket->recvbuf);
+
+        close(socket->sd); // Syscall
     } else if (socket->state == ESTABLISHED) {
         // Invoked by client
+        socket->state = CLOSING_BY_HOST;
+
         packet_header(header, socket->seq_number, socket->ack_number, 1, 0, 0, 1,
                       MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
         sendto(socket->sd, header, sizeof(microtcp_header_t), 0, socket->remote_addr,
@@ -295,14 +301,16 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
         sendto(socket->sd, header, sizeof(microtcp_header_t), 0, socket->remote_addr,
                socket->addr_len);
 
+        free(socket->recvbuf);
+
+        close(socket->sd); // Syscall
+
         socket->state = CLOSED;
     }
 
     free(header);
-    free(socket->recvbuf);
 
     return 0;
-    close(socket->sd); // Syscall
 }
 
 ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer, size_t length,
