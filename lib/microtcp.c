@@ -20,11 +20,20 @@
 
 #include "microtcp.h"
 #include "../utils/crc32.h"
+#include "utils/queue.h"
+#include <errno.h>
 #include <netinet/ip.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 #include <unistd.h>
+
+struct microtcp_chunk_info {
+    size_t expected_ack;          /* The ACK number of the chunk */
+    uint8_t *chunk_payload_start; /* A pointer to the start of the payload */
+    size_t payload_size;          /* Obvious */
+};
 
 static void packet_header(microtcp_header_t *header, uint32_t seq_number,
                           uint32_t ack_number, int ACK, int RST, int SYN, int FIN,
@@ -315,7 +324,107 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
 
 ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer, size_t length,
                       int flags) {
-    /* Your code here */
+    size_t remaining, data_sent, bytes_to_send, chunks_count, i, seq_number,
+        chunk_size;
+    uint8_t *chunk;
+    microtcp_header_t header;
+    struct timeval timeout = {.tv_sec = 0, .tv_usec = MICROTCP_ACK_TIMEOUT_US};
+    Queue_t ack_queue = new_queue();
+    struct microtcp_chunk_info *chunk_info;
+
+    remaining = length;
+    while (data_sent < length) {
+        bytes_to_send = min(socket->curr_win_size, socket->cwnd, remaining);
+        chunks_count = bytes_to_send / MICROTCP_MSS;
+
+        chunk_size = MICROTCP_MSS + sizeof(microtcp_header_t);
+        chunk = malloc(chunk_size);
+
+        for (i = 0; i < chunks_count; i++) {
+            packet_header(&header, seq_number, socket->ack_number, 0, 0, 0, 0,
+                          socket->curr_win_size, MICROTCP_MSS, 0, 0, 0, 0);
+
+            chunk_info = malloc(sizeof(struct microtcp_chunk_info));
+            chunk_info->chunk_payload_start = buffer + data_sent + i * MICROTCP_MSS;
+            chunk_info->expected_ack = socket->seq_number + (i + 1) * MICROTCP_MSS;
+            chunk_info->payload_size = MICROTCP_MSS;
+
+            enqueue(ack_queue, chunk_info);
+
+            memcpy(chunk, &header, sizeof(microtcp_header_t));
+            memcpy(chunk + sizeof(microtcp_header_t),
+                   chunk_info->chunk_payload_start, chunk_info->payload_size);
+
+            header.checksum = crc32(chunk, chunk_size);
+
+            send(socket->sd, chunk, chunk_size, flags);
+        }
+
+        free(chunk);
+
+        /* Check if there is a semi - filled chunk */
+        if (bytes_to_send % MICROTCP_MSS) {
+            chunks_count++;
+
+            chunk_info = malloc(sizeof(struct microtcp_chunk_info));
+            chunk_info->chunk_payload_start =
+                buffer + data_sent + (chunks_count - 1) * MICROTCP_MSS;
+            chunk_info->expected_ack =
+                socket->seq_number + i * MICROTCP_MSS + bytes_to_send % MICROTCP_MSS;
+            chunk_info->payload_size = bytes_to_send % MICROTCP_MSS;
+
+            enqueue(ack_queue, chunk_info);
+
+            chunk_size = chunk_info->payload_size + sizeof(microtcp_header_t);
+            chunk = malloc(chunk_size);
+
+            packet_header(&header, seq_number, socket->ack_number, 0, 0, 0, 0,
+                          socket->curr_win_size, chunk_info->payload_size, 0, 0, 0,
+                          0);
+
+            memcpy(chunk, &header, sizeof(microtcp_header_t));
+            memcpy(chunk + sizeof(microtcp_header_t),
+                   buffer + data_sent + (chunks_count - 1) * MICROTCP_MSS,
+                   chunk_info->payload_size);
+
+            header.checksum = crc32(chunk, chunk_size);
+
+            send(socket->sd, chunk, chunk_size, flags);
+
+            free(chunk);
+        }
+
+        /* Get the ACKs */
+        if (setsockopt(socket->sd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                       sizeof(struct timeval)) < 0) {
+            perror(" setsockopt ");
+        }
+
+        for (i = 0; i < chunks_count; i++) {
+            ssize_t rcv_ret =
+                recv(socket->sd, &header, sizeof(microtcp_header_t), 0);
+
+            if (rcv_ret == -1 && errno == EWOULDBLOCK) {
+                /*TODO: Implement duplicate ACK */
+            }
+
+            if (header.ack_number >= queue_head(ack_queue)) {
+                while (header.ack_number >= queue_head(ack_queue)) {
+                    free(dequeue(ack_queue));
+                }
+            } else {
+                chunk_info = (struct microtcp_chunk_info *)queue_head(ack_queue);
+                send(socket->sd, chunk_info->chunk_payload_start,
+                     chunk_info->payload_size, 0);
+            }
+        }
+        /* Retransmissions */
+        /* Update window */
+        /* Update congestion control */
+        remaining -= bytes_to_send;
+        data_sent += bytes_to_send;
+        /* XX */
+    }
 }
 
 ssize_t microtcp_recv(microtcp_sock_t *socket, void *buffer, size_t length,
@@ -323,9 +432,9 @@ ssize_t microtcp_recv(microtcp_sock_t *socket, void *buffer, size_t length,
     /* Your code here */
 }
 
-/* Function to create a packet header given its fields. The user is responsible for
- * allocating space for the header and freeing it. Control parameters ACK, RST,
- * SYN, FIN are treated as booleans */
+/* Function to create a packet header given its fields. The user is responsible
+ * for allocating space for the header and freeing it. Control parameters ACK,
+ * RST, SYN, FIN are treated as booleans */
 static void packet_header(microtcp_header_t *header, uint32_t seq_number,
                           uint32_t ack_number, int ACK, int RST, int SYN, int FIN,
                           uint16_t window, uint32_t data_len, uint32_t future0,
