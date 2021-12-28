@@ -20,7 +20,6 @@
 
 #include "microtcp.h"
 #include "../utils/crc32.h"
-#include "utils/queue.h"
 #include <errno.h>
 #include <netinet/ip.h>
 #include <stdio.h>
@@ -29,11 +28,39 @@
 #include <time.h>
 #include <unistd.h>
 
-struct microtcp_chunk_info {
-    size_t expected_ack;          /* The ACK number of the chunk */
-    uint8_t *chunk_payload_start; /* A pointer to the start of the payload */
-    size_t payload_size;          /* Obvious */
-};
+enum State { SLOW_START, CNGSTN_AVOIDANCE, FAST_RETRANSMIT };
+
+enum State slow_start(microtcp_sock_t *socket, int timeout, int duplicate_ack) {
+    if (timeout) {
+        socket->ssthresh = socket->cwnd/2;
+        socket->cwnd = MICROTCP_INIT_CWND;
+
+        return SLOW_START;
+    }
+
+    if (duplicate_ack == 3) {
+        socket->ssthresh = socket->cwnd/2;
+        socket->cwnd = socket->ssthresh + 3*MICROTCP_MSS;
+
+        return FAST_RETRANSMIT;
+    }
+
+    if (socket->cwnd >= socket->ssthresh) {
+        return CNGSTN_AVOIDANCE;
+    } else {
+        socket->cwnd += MICROTCP_MSS;
+
+        return SLOW_START;
+    }
+}
+
+enum State congest_avoid(microtcp_sock_t *socket, int timeout, int duplicate_ack) {
+    
+}
+
+enum State fast_retransmit(microtcp_sock_t *socket, int timeout, int duplicate_ack) {
+    
+}
 
 static void packet_header(microtcp_header_t *header, uint32_t seq_number,
                           uint32_t ack_number, int ACK, int RST, int SYN, int FIN,
@@ -54,6 +81,9 @@ microtcp_sock_t microtcp_socket(int domain, int type, int protocol) {
     if (sock.sd == -1) {
         sock.state = INVALID;
     }
+
+    sock.cwnd = MICROTCP_MSS;
+    sock.ssthresh = MICROTCP_INIT_SSTHRESH;
 
     sock.packets_lost = 0;
     sock.packets_received = 0;
@@ -76,9 +106,6 @@ int microtcp_bind(microtcp_sock_t *socket, const struct sockaddr *address,
     if (bind(socket->sd, address, address_len) < 0) {
         return -1;
     }
-
-    socket->remote_addr = address;
-    socket->addr_len = address_len;
 
     socket->state = LISTEN;
 
@@ -114,12 +141,10 @@ int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
     header->future_use2 = 0;
     header->checksum = 0;
 
-    sendto(socket->sd, header, sizeof(header), 0, socket->remote_addr,
-           socket->addr_len);
+    send(socket->sd, header, sizeof(header), 0);
 
     /*receive packet SYN-ACK */
-    recvfrom(socket->sd, header, sizeof(header), 0, socket->remote_addr,
-             &(socket->addr_len));
+    recv(socket->sd, header, sizeof(header), 0);
 
     /*elegxos Ack number poy elaba*/
     if ((socket->seq_number + 1) != header->ack_number) {
@@ -148,8 +173,7 @@ int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
     header->future_use2 = 0;
     header->checksum = 0;
 
-    sendto(socket->sd, header, sizeof(header), 0, socket->remote_addr,
-           socket->addr_len);
+    send(socket->sd, header, sizeof(header), 0);
 
     /*o seq_num kai o ack_num mesa sth socket prepei na allajoun*/
     socket->seq_number = socket->seq_number + 1;
@@ -181,10 +205,6 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
     }
 
     /*receive SYN=1, seq=N HEADER*/
-
-    recvfrom(socket->sd, header, sizeof(header), 0, socket->remote_addr,
-             &(socket->addr_len));
-
     if (recv(socket->sd, header, MICROTCP_RECVBUF_LEN, 0) == -1)
         return -1;
 
@@ -207,14 +227,6 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
     header->checksum = 0;
 
     /*send SYN=1,ACK=1 from control, seq=M,ack=N+1 HEADER*/
-
-    sendto(socket->sd, header, sizeof(header), 0, socket->remote_addr,
-           socket->addr_len);
-
-    /*receive ACK=1 from control, seq=N+1,ack=M+1 HEADER*/
-    recvfrom(socket->sd, header, sizeof(header), 0, socket->remote_addr,
-             &(socket->addr_len));
-
     if (send(socket->sd, header, sizeof(header), 0) == -1)
         return -1;
 
@@ -252,17 +264,14 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
         packet_header(header, socket->seq_number, socket->ack_number + 1, 1, 0, 0, 0,
                       MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
 
-        sendto(socket->sd, header, sizeof(microtcp_header_t), 0, socket->remote_addr,
-               socket->addr_len);
+        send(socket->sd, header, sizeof(microtcp_header_t), 0);
         socket->ack_number += 1;
 
         packet_header(header, socket->seq_number, socket->ack_number, 1, 0, 0, 1,
                       MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
-        sendto(socket->sd, header, sizeof(microtcp_header_t), 0, socket->remote_addr,
-               socket->addr_len);
+        send(socket->sd, header, sizeof(microtcp_header_t), 0);
 
-        recvfrom(socket->sd, header, sizeof(microtcp_header_t), 0,
-                 socket->remote_addr, &(socket->addr_len));
+        recv(socket->sd, header, sizeof(microtcp_header_t), 0);
 
         if (header->control != (1 << 12) ||
             socket->ack_number != header->seq_number ||
@@ -282,11 +291,9 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
 
         packet_header(header, socket->seq_number, socket->ack_number, 1, 0, 0, 1,
                       MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
-        sendto(socket->sd, header, sizeof(microtcp_header_t), 0, socket->remote_addr,
-               socket->addr_len);
+        send(socket->sd, header, sizeof(microtcp_header_t), 0);
 
-        recvfrom(socket->sd, header, sizeof(microtcp_header_t), 0,
-                 socket->remote_addr, &(socket->addr_len));
+        recv(socket->sd, header, sizeof(microtcp_header_t), 0);
 
         if (header->control != (1 << 12) ||
             socket->seq_number + 1 != header->ack_number) {
@@ -296,8 +303,7 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
 
         socket->seq_number += 1;
 
-        recvfrom(socket->sd, header, sizeof(microtcp_header_t), 0,
-                 socket->remote_addr, &(socket->addr_len));
+        recv(socket->sd, header, sizeof(microtcp_header_t), 0);
 
         if (header->control != ((1 << 12) | (1 << 15))) {
             return -1;
@@ -307,8 +313,7 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
 
         packet_header(header, socket->seq_number, socket->ack_number, 1, 0, 0, 0,
                       MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
-        sendto(socket->sd, header, sizeof(microtcp_header_t), 0, socket->remote_addr,
-               socket->addr_len);
+        send(socket->sd, header, sizeof(microtcp_header_t), 0);
 
         free(socket->recvbuf);
 
@@ -325,12 +330,16 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
 ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer, size_t length,
                       int flags) {
     size_t remaining, data_sent, bytes_to_send, chunks_count, i, seq_number,
-        chunk_size;
+        chunk_size, max_ack=0;
     uint8_t *chunk;
+    uint8_t duplicate_ack;
     microtcp_header_t header;
     struct timeval timeout = {.tv_sec = 0, .tv_usec = MICROTCP_ACK_TIMEOUT_US};
-    Queue_t ack_queue = new_queue();
-    struct microtcp_chunk_info *chunk_info;
+
+    enum State (*actions[3])(microtcp_sock_t *, int, int) = {slow_start,
+                                                             congest_avoid,
+                                                             fast_retransmit};
+    enum State state = SLOW_START;
 
     remaining = length;
     while (data_sent < length) {
@@ -344,16 +353,9 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer, size_t length
             packet_header(&header, seq_number, socket->ack_number, 0, 0, 0, 0,
                           socket->curr_win_size, MICROTCP_MSS, 0, 0, 0, 0);
 
-            chunk_info = malloc(sizeof(struct microtcp_chunk_info));
-            chunk_info->chunk_payload_start = buffer + data_sent + i * MICROTCP_MSS;
-            chunk_info->expected_ack = socket->seq_number + (i + 1) * MICROTCP_MSS;
-            chunk_info->payload_size = MICROTCP_MSS;
-
-            enqueue(ack_queue, chunk_info);
-
             memcpy(chunk, &header, sizeof(microtcp_header_t));
             memcpy(chunk + sizeof(microtcp_header_t),
-                   chunk_info->chunk_payload_start, chunk_info->payload_size);
+                   buffer + data_sent + i * MICROTCP_MSS, MICROTCP_MSS);
 
             header.checksum = crc32(chunk, chunk_size);
 
@@ -366,26 +368,17 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer, size_t length
         if (bytes_to_send % MICROTCP_MSS) {
             chunks_count++;
 
-            chunk_info = malloc(sizeof(struct microtcp_chunk_info));
-            chunk_info->chunk_payload_start =
-                buffer + data_sent + (chunks_count - 1) * MICROTCP_MSS;
-            chunk_info->expected_ack =
-                socket->seq_number + i * MICROTCP_MSS + bytes_to_send % MICROTCP_MSS;
-            chunk_info->payload_size = bytes_to_send % MICROTCP_MSS;
-
-            enqueue(ack_queue, chunk_info);
-
-            chunk_size = chunk_info->payload_size + sizeof(microtcp_header_t);
+            chunk_size = (bytes_to_send % MICROTCP_MSS) + sizeof(microtcp_header_t);
             chunk = malloc(chunk_size);
 
             packet_header(&header, seq_number, socket->ack_number, 0, 0, 0, 0,
-                          socket->curr_win_size, chunk_info->payload_size, 0, 0, 0,
+                          socket->curr_win_size, bytes_to_send % MICROTCP_MSS, 0, 0, 0,
                           0);
 
             memcpy(chunk, &header, sizeof(microtcp_header_t));
             memcpy(chunk + sizeof(microtcp_header_t),
                    buffer + data_sent + (chunks_count - 1) * MICROTCP_MSS,
-                   chunk_info->payload_size);
+                   bytes_to_send % MICROTCP_MSS);
 
             header.checksum = crc32(chunk, chunk_size);
 
@@ -404,20 +397,20 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer, size_t length
             ssize_t rcv_ret =
                 recv(socket->sd, &header, sizeof(microtcp_header_t), 0);
 
-            if (rcv_ret == -1 && errno == EWOULDBLOCK) {
-                /*TODO: Implement duplicate ACK */
+            if (rcv_ret == -1) {
+                duplicate_ack = 0;
+            } else {
+                if (max_ack < header.ack_number) {
+                    max_ack = header.ack_number;
+                    duplicate_ack = 0;
+                } else if(max_ack == header.ack_number) {
+                    ++duplicate_ack;
+                }
             }
 
-            if (header.ack_number >= queue_head(ack_queue)) {
-                while (header.ack_number >= queue_head(ack_queue)) {
-                    free(dequeue(ack_queue));
-                }
-            } else {
-                chunk_info = (struct microtcp_chunk_info *)queue_head(ack_queue);
-                send(socket->sd, chunk_info->chunk_payload_start,
-                     chunk_info->payload_size, 0);
-            }
+            state = actions[state](socket, rcv_ret == -1, duplicate_ack);
         }
+
         /* Retransmissions */
         /* Update window */
         /* Update congestion control */

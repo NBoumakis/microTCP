@@ -81,9 +81,6 @@ typedef struct {
     uint64_t bytes_send;
     uint64_t bytes_received;
     uint64_t bytes_lost;
-
-    struct sockaddr *remote_addr;
-    socklen_t addr_len;
 } microtcp_sock_t;
 
 /**
