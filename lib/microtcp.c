@@ -28,25 +28,28 @@
 #include <time.h>
 #include <unistd.h>
 
-enum State { SLOW_START, CNGSTN_AVOIDANCE, FAST_RETRANSMIT };
+enum State {
+    SLOW_START,
+    CONGESTION_AVOID
+};
 
 enum State slow_start(microtcp_sock_t *socket, int timeout, int duplicate_ack) {
     if (timeout) {
-        socket->ssthresh = socket->cwnd/2;
-        socket->cwnd = MICROTCP_INIT_CWND;
+        socket->ssthresh = socket->cwnd / 2;
+        socket->cwnd = min(MICROTCP_MSS, socket->ssthresh);
 
         return SLOW_START;
     }
+    /*
+      if (duplicate_ack == 3) {
+          socket->ssthresh = socket->cwnd/2;
+          socket->cwnd = socket->ssthresh + 3*MICROTCP_MSS;
 
-    if (duplicate_ack == 3) {
-        socket->ssthresh = socket->cwnd/2;
-        socket->cwnd = socket->ssthresh + 3*MICROTCP_MSS;
-
-        return FAST_RETRANSMIT;
-    }
-
+          return CONGESTION_AVOID;
+      }
+  */
     if (socket->cwnd >= socket->ssthresh) {
-        return CNGSTN_AVOIDANCE;
+        return CONGESTION_AVOID;
     } else {
         socket->cwnd += MICROTCP_MSS;
 
@@ -54,19 +57,30 @@ enum State slow_start(microtcp_sock_t *socket, int timeout, int duplicate_ack) {
     }
 }
 
-enum State congest_avoid(microtcp_sock_t *socket, int timeout, int duplicate_ack) {
-    
-}
+enum State congest_avoid(microtcp_sock_t *socket, int timeout,
+                         int duplicate_ack) {
+    if (timeout) {
+        socket->ssthresh = socket->cwnd / 2;
+        socket->cwnd = min(MICROTCP_MSS, socket->ssthresh);
 
-enum State fast_retransmit(microtcp_sock_t *socket, int timeout, int duplicate_ack) {
-    
+        return SLOW_START;
+    }
+
+    if (duplicate_ack == 3) {
+        socket->ssthresh = socket->cwnd / 2;
+        socket->cwnd = socket->cwnd / 2 + MICROTCP_MSS;
+    } else if (duplicate_ack == 0) {
+        socket->cwnd += MICROTCP_MSS * (MICROTCP_MSS / socket->cwnd);
+    }
+
+    return CONGESTION_AVOID;
 }
 
 static void packet_header(microtcp_header_t *header, uint32_t seq_number,
-                          uint32_t ack_number, int ACK, int RST, int SYN, int FIN,
-                          uint16_t window, uint32_t data_len, uint32_t future_use0,
-                          uint32_t future_use1, uint32_t future_use2,
-                          uint32_t checksum);
+                          uint32_t ack_number, int ACK, int RST, int SYN,
+                          int FIN, uint16_t window, uint32_t data_len,
+                          uint32_t future_use0, uint32_t future_use1,
+                          uint32_t future_use2, uint32_t checksum);
 
 microtcp_sock_t microtcp_socket(int domain, int type, int protocol) {
     microtcp_sock_t sock;
@@ -118,8 +132,7 @@ int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
     int ACK = 1 << 12;
     int SYNACK = ACK | SYN;
 
-    microtcp_header_t *header =
-        (microtcp_header_t *)malloc(sizeof(microtcp_header_t));
+    microtcp_header_t header;
 
     if (socket->state == INVALID)
         return -1;
@@ -132,56 +145,40 @@ int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
     socket->recvbuf = (uint8_t *)malloc(sizeof(uint8_t) * MICROTCP_RECVBUF_LEN);
 
     /*send packet SYN*/
-    header->seq_number = socket->seq_number;
-    header->ack_number = 0;
-    header->window = MICROTCP_WIN_SIZE;
-    header->data_len = 0;
-    header->future_use0 = 0;
-    header->future_use1 = 0;
-    header->future_use2 = 0;
-    header->checksum = 0;
-
-    send(socket->sd, header, sizeof(header), 0);
+    packet_header(&header, socket->seq_number, 0, 0, 0, 1, 0, MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
+    header.checksum = crc32(&header, sizeof(header));
+    send(socket->sd, &header, sizeof(header), 0);
+    ++socket->seq_number;
 
     /*receive packet SYN-ACK */
-    recv(socket->sd, header, sizeof(header), 0);
+    recv(socket->sd, &header, sizeof(header), 0);
+
+    if (header.checksum != crc32(&header, sizeof(header))) {
+        printf("Error: 3-way handshake: SYN,ACK: Checksum\n");
+        return -1;
+    }
 
     /*elegxos Ack number poy elaba*/
-    if ((socket->seq_number + 1) != header->ack_number) {
-        printf("error elegxos ack number\n");
+    if ((socket->seq_number + 1) != header.ack_number) {
+        printf("Error: 3-way handshake: SYN,ACK: Ack number\n");
         return -1;
-    } else {
-        printf("ok,server Ack\n");
     }
 
     /*elegxos gia ACK=1 kai SYN=1*/
-    if (header->control != SYNACK) {
-        printf("error elegxos SYNACK\n");
+    if (header.control != SYNACK) {
+        printf("Error 3-way handshake: SYN,ACK: Control fields\n");
         return -1;
-    } else {
-        printf("ok,server SYNACK\n");
     }
 
+    socket->curr_win_size = header.window;
+    socket->ack_number = header.seq_number + 1;
+
     /*send ACK sto SYN-ACK*/
-    header->seq_number = socket->seq_number + 1;
-    header->ack_number = header->seq_number + 1;
-    header->control = ACK;
-    header->window = MICROTCP_WIN_SIZE;
-    header->data_len = 0;
-    header->future_use0 = 0;
-    header->future_use1 = 0;
-    header->future_use2 = 0;
-    header->checksum = 0;
-
-    send(socket->sd, header, sizeof(header), 0);
-
-    /*o seq_num kai o ack_num mesa sth socket prepei na allajoun*/
-    socket->seq_number = socket->seq_number + 1;
-    socket->ack_number = header->ack_number;
+    packet_header(&header, socket->seq_number, socket->ack_number, 1, 0, 0, 0, MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
+    send(socket->sd, &header, sizeof(header), 0);
+    ++socket->seq_number;
 
     socket->state = ESTABLISHED;
-
-    free(header);
 
     return 0;
 }
@@ -219,7 +216,7 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
     header->seq_number = socket->seq_number;
     header->ack_number = socket->ack_number;
     header->control = SYNACK;
-    header->window = MICROTCP_RECVBUF_LEN;
+    header->window = MICROTCP_WIN_SIZE;
     header->data_len = 0;
     header->future_use0 = 0;
     header->future_use1 = 0;
@@ -261,8 +258,8 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
 
     if (socket->state == CLOSING_BY_PEER) {
         // Server side confirmed
-        packet_header(header, socket->seq_number, socket->ack_number + 1, 1, 0, 0, 0,
-                      MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
+        packet_header(header, socket->seq_number, socket->ack_number + 1, 1, 0, 0,
+                      0, MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
 
         send(socket->sd, header, sizeof(microtcp_header_t), 0);
         socket->ack_number += 1;
@@ -327,18 +324,17 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
     return 0;
 }
 
-ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer, size_t length,
-                      int flags) {
+ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
+                      size_t length, int flags) {
     size_t remaining, data_sent, bytes_to_send, chunks_count, i, seq_number,
-        chunk_size, max_ack=0;
+        chunk_size, max_ack = 0;
     uint8_t *chunk;
     uint8_t duplicate_ack;
     microtcp_header_t header;
     struct timeval timeout = {.tv_sec = 0, .tv_usec = MICROTCP_ACK_TIMEOUT_US};
 
-    enum State (*actions[3])(microtcp_sock_t *, int, int) = {slow_start,
-                                                             congest_avoid,
-                                                             fast_retransmit};
+    enum State (*actions[2])(microtcp_sock_t *, int, int) = {slow_start,
+                                                             congest_avoid};
     enum State state = SLOW_START;
 
     remaining = length;
@@ -372,8 +368,8 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer, size_t length
             chunk = malloc(chunk_size);
 
             packet_header(&header, seq_number, socket->ack_number, 0, 0, 0, 0,
-                          socket->curr_win_size, bytes_to_send % MICROTCP_MSS, 0, 0, 0,
-                          0);
+                          socket->curr_win_size, bytes_to_send % MICROTCP_MSS, 0, 0,
+                          0, 0);
 
             memcpy(chunk, &header, sizeof(microtcp_header_t));
             memcpy(chunk + sizeof(microtcp_header_t),
@@ -394,8 +390,7 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer, size_t length
         }
 
         for (i = 0; i < chunks_count; i++) {
-            ssize_t rcv_ret =
-                recv(socket->sd, &header, sizeof(microtcp_header_t), 0);
+            ssize_t rcv_ret = recv(socket->sd, &header, sizeof(microtcp_header_t), 0);
 
             if (rcv_ret == -1) {
                 duplicate_ack = 0;
@@ -403,7 +398,7 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer, size_t length
                 if (max_ack < header.ack_number) {
                     max_ack = header.ack_number;
                     duplicate_ack = 0;
-                } else if(max_ack == header.ack_number) {
+                } else if (max_ack == header.ack_number) {
                     ++duplicate_ack;
                 }
             }
@@ -429,9 +424,10 @@ ssize_t microtcp_recv(microtcp_sock_t *socket, void *buffer, size_t length,
  * for allocating space for the header and freeing it. Control parameters ACK,
  * RST, SYN, FIN are treated as booleans */
 static void packet_header(microtcp_header_t *header, uint32_t seq_number,
-                          uint32_t ack_number, int ACK, int RST, int SYN, int FIN,
-                          uint16_t window, uint32_t data_len, uint32_t future0,
-                          uint32_t future1, uint32_t future2, uint32_t checksum) {
+                          uint32_t ack_number, int ACK, int RST, int SYN,
+                          int FIN, uint16_t window, uint32_t data_len,
+                          uint32_t future0, uint32_t future1, uint32_t future2,
+                          uint32_t checksum) {
 
     header->seq_number = seq_number;
     header->ack_number = ack_number;
