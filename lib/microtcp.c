@@ -28,8 +28,10 @@
 #include <time.h>
 #include <unistd.h>
 
-#define SYN (1 << 14)
 #define ACK (1 << 12)
+#define RST (1 << 13)
+#define SYN (1 << 14)
+#define FIN (1 << 15)
 
 enum State {
     SLOW_START,
@@ -263,23 +265,23 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
 }
 
 int microtcp_shutdown(microtcp_sock_t *socket, int how) {
-    microtcp_header_t *header = malloc(sizeof(microtcp_header_t));
+    microtcp_header_t header;
 
     if (socket->state == CLOSING_BY_PEER) {
         // Server side confirmed
-        packet_header(header, socket->seq_number, socket->ack_number + 1, 1, 0, 0,
+        packet_header(&header, socket->seq_number, socket->ack_number + 1, 1, 0, 0,
                       0, MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
 
-        send(socket->sd, header, sizeof(microtcp_header_t), 0);
+        send(socket->sd, &header, sizeof(microtcp_header_t), 0);
         socket->ack_number += 1;
 
-        packet_header(header, socket->seq_number, socket->ack_number, 1, 0, 0, 1,
+        packet_header(&header, socket->seq_number, socket->ack_number, 1, 0, 0, 1,
                       MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
-        send(socket->sd, header, sizeof(microtcp_header_t), 0);
+        send(socket->sd, &header, sizeof(microtcp_header_t), 0);
 
-        recv(socket->sd, header, sizeof(microtcp_header_t), 0);
+        recv(socket->sd, &header, sizeof(microtcp_header_t), 0);
 
-        if (header->control != (1 << 12) ||
+        if (header.control != ACK ||
             socket->ack_number != header->seq_number ||
             socket->seq_number + 1 != header->ack_number) {
             free(header);
@@ -449,18 +451,18 @@ static void packet_header(microtcp_header_t *header, uint32_t seq_number,
 
     header->control = 0;
     if (ack) {
-        header->control |= (1 << 12);
+        header->control |= ACK;
     }
 
     if (rst) {
-        header->control |= (1 << 13);
+        header->control |= RST;
     }
 
     if (syn) {
-        header->control |= (1 << 14);
+        header->control |= SYN;
     }
 
     if (fin) {
-        header->control |= (1 << 15);
+        header->control |= FIN;
     }
 }
