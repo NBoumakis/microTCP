@@ -28,6 +28,9 @@
 #include <time.h>
 #include <unistd.h>
 
+#define SYN (1 << 14)
+#define ACK (1 << 12)
+
 enum State {
     SLOW_START,
     CONGESTION_AVOID
@@ -77,8 +80,8 @@ enum State congest_avoid(microtcp_sock_t *socket, int timeout,
 }
 
 static void packet_header(microtcp_header_t *header, uint32_t seq_number,
-                          uint32_t ack_number, int ACK, int RST, int SYN,
-                          int FIN, uint16_t window, uint32_t data_len,
+                          uint32_t ack_number, int ack, int rst, int syn,
+                          int fin, uint16_t window, uint32_t data_len,
                           uint32_t future_use0, uint32_t future_use1,
                           uint32_t future_use2, uint32_t checksum);
 
@@ -128,10 +131,6 @@ int microtcp_bind(microtcp_sock_t *socket, const struct sockaddr *address,
 
 int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
                      socklen_t address_len) {
-    int SYN = 1 << 14;
-    int ACK = 1 << 12;
-    int SYNACK = ACK | SYN;
-
     microtcp_header_t header;
 
     if (socket->state == INVALID)
@@ -168,7 +167,7 @@ int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
     }
 
     /*elegxos gia ACK=1 kai SYN=1*/
-    if (header.control != SYNACK) {
+    if (header.control != (SYN | ACK)) {
         printf("Error 3-way handshake: SYN,ACK: Control fields\n");
         return -1;
     }
@@ -194,9 +193,6 @@ int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
 
 int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
                     socklen_t address_len) {
-    uint16_t SYN = 1 << 14;      // the last-1==1
-    uint16_t ACK = 1 << 12;      // the last-3==1
-    uint16_t SYNACK = SYN | ACK; // SYN=1, ACK=1
 
     microtcp_header_t header;
 
@@ -437,8 +433,8 @@ ssize_t microtcp_recv(microtcp_sock_t *socket, void *buffer, size_t length,
  * for allocating space for the header and freeing it. Control parameters ACK,
  * RST, SYN, FIN are treated as booleans */
 static void packet_header(microtcp_header_t *header, uint32_t seq_number,
-                          uint32_t ack_number, int ACK, int RST, int SYN,
-                          int FIN, uint16_t window, uint32_t data_len,
+                          uint32_t ack_number, int ack, int rst, int syn,
+                          int fin, uint16_t window, uint32_t data_len,
                           uint32_t future0, uint32_t future1, uint32_t future2,
                           uint32_t checksum) {
 
@@ -452,19 +448,19 @@ static void packet_header(microtcp_header_t *header, uint32_t seq_number,
     header->checksum = checksum;
 
     header->control = 0;
-    if (ACK) {
+    if (ack) {
         header->control |= (1 << 12);
     }
 
-    if (RST) {
+    if (rst) {
         header->control |= (1 << 13);
     }
 
-    if (SYN) {
+    if (syn) {
         header->control |= (1 << 14);
     }
 
-    if (FIN) {
+    if (fin) {
         header->control |= (1 << 15);
     }
 }
