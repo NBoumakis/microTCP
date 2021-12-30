@@ -268,69 +268,115 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
     microtcp_header_t header;
 
     if (socket->state == CLOSING_BY_PEER) {
-        // Server side confirmed
-        packet_header(&header, socket->seq_number, socket->ack_number + 1, 1, 0, 0,
+        // Server side confirmed, packet FIN,ACK handled by microtcp_recv
+        packet_header(&header, socket->seq_number, socket->ack_number, 1, 0, 0,
                       0, MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
+        header.checksum = crc32(&header, sizeof(header));
 
-        send(socket->sd, &header, sizeof(microtcp_header_t), 0);
-        socket->ack_number += 1;
+        if (send(socket->sd, &header, sizeof(microtcp_header_t), 0) < 0) {
+            printf("Error: Shutdown handshake: ACK: Send packet\n");
+            return -1;
+        }
+        ++socket->seq_number;
 
         packet_header(&header, socket->seq_number, socket->ack_number, 1, 0, 0, 1,
                       MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
-        send(socket->sd, &header, sizeof(microtcp_header_t), 0);
+        header.checksum = crc32(&header, sizeof(header));
 
-        recv(socket->sd, &header, sizeof(microtcp_header_t), 0);
+        if (send(socket->sd, &header, sizeof(microtcp_header_t), 0) < 0) {
+            printf("Error: Shutdown handshake: FIN,ACK: Send packet\n");
+            return -1;
+        }
+        ++socket->seq_number;
 
-        if (header.control != ACK ||
-            socket->ack_number != header->seq_number ||
-            socket->seq_number + 1 != header->ack_number) {
-            free(header);
+        if (recv(socket->sd, &header, sizeof(microtcp_header_t), 0) < 0) {
+            printf("Error: Shutdown handshake: ACK: Receive packet\n");
             return -1;
         }
 
-        socket->state = CLOSED;
+        if (crc32(&header, sizeof(header)) != header.checksum) {
+            printf("Error: Shutdown handshake: ACK: Checksum\n");
+            return -1;
+        }
 
-        free(socket->recvbuf);
+        if (header.control != ACK) {
+            printf("Error: Shutdown handshake: ACK: Control fields\n");
+            return -1;
+        }
 
-        close(socket->sd); // Syscall
+        if (socket->ack_number != header.seq_number) {
+            printf("Error: Shutdown handshake: ACK: Seq number\n");
+            return -1;
+        }
+
+        if (socket->seq_number != header.ack_number) {
+            printf("Error: Shutdown handshake: ACK: Ack number\n");
+            return -1;
+        }
     } else if (socket->state == ESTABLISHED) {
         // Invoked by client
+        packet_header(&header, socket->seq_number, socket->ack_number, 1, 0, 0, 1,
+                      MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
+        header.checksum = crc32(&header, sizeof(header));
+
+        if (send(socket->sd, &header, sizeof(microtcp_header_t), 0)) {
+            printf("Error: Shutdown handshake: FIN,ACK: Send number\n");
+            return -1;
+        }
+        ++socket->seq_number;
+
+        if (recv(socket->sd, &header, sizeof(microtcp_header_t), 0) < 0) {
+            printf("Error: Shutdown handshake: ACK: Receive packet\n");
+            return -1;
+        }
+
+        if (crc32(&header, sizeof(header)) != header.checksum) {
+            printf("Error: Shutdown handshake: ACK: Checksum\n");
+            return -1;
+        }
+
+        if (header.control != ACK) {
+            printf("Error: Shutdown handshake: ACK: Control fields\n");
+            return -1;
+        }
+
+        if (socket->seq_number != header.ack_number) {
+            printf("Error: Shutdown handshake: ACK: Ack number\n");
+            return -1;
+        }
+
         socket->state = CLOSING_BY_HOST;
 
-        packet_header(header, socket->seq_number, socket->ack_number, 1, 0, 0, 1,
-                      MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
-        send(socket->sd, header, sizeof(microtcp_header_t), 0);
-
-        recv(socket->sd, header, sizeof(microtcp_header_t), 0);
-
-        if (header->control != (1 << 12) ||
-            socket->seq_number + 1 != header->ack_number) {
-            free(header);
+        if (recv(socket->sd, &header, sizeof(microtcp_header_t), 0) < 0) {
+            printf("Error: Shutdown handshake: FIN,ACK: Receive packet\n");
             return -1;
         }
 
-        socket->seq_number += 1;
-
-        recv(socket->sd, header, sizeof(microtcp_header_t), 0);
-
-        if (header->control != ((1 << 12) | (1 << 15))) {
+        if (crc32(&header, sizeof(header)) != header.checksum) {
+            printf("Error: Shutdown handshake: ACK: Checksum\n");
             return -1;
         }
 
-        socket->ack_number = header->seq_number + 1;
+        if (header.control != (ACK | FIN)) {
+            printf("Error: Shutdown handshake: ACK: Control fields\n");
+            return -1;
+        }
+        socket->ack_number = header.seq_number + 1;
 
-        packet_header(header, socket->seq_number, socket->ack_number, 1, 0, 0, 0,
+        packet_header(&header, socket->seq_number, socket->ack_number, 1, 0, 0, 0,
                       MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
-        send(socket->sd, header, sizeof(microtcp_header_t), 0);
+        header.checksum = crc32(&header, sizeof(header));
 
-        free(socket->recvbuf);
-
-        close(socket->sd); // Syscall
-
-        socket->state = CLOSED;
+        if (send(socket->sd, &header, sizeof(microtcp_header_t), 0) < 0) {
+            printf("Error: Shutdown handshake: ACK: Send packet\n");
+            return -1;
+        }
     }
 
-    free(header);
+    free(socket->recvbuf);
+    close(socket->sd); // Syscall
+
+    socket->state = CLOSED;
 
     return 0;
 }
