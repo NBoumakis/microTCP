@@ -383,7 +383,7 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
 
 ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
                       size_t length, int flags) {
-    size_t remaining, data_sent, bytes_to_send, chunks_count, i, seq_number,
+    size_t remaining, data_sent, bytes_to_send, chunks_count, i,
         chunk_size, max_ack = 0;
     uint8_t *chunk;
     uint8_t duplicate_ack;
@@ -422,7 +422,7 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
             chunk_size = (bytes_to_send % MICROTCP_MSS) + sizeof(microtcp_header_t);
             chunk = malloc(chunk_size);
 
-            packet_header(&header, seq_number, socket->ack_number, 0, 0, 0, 0,
+            packet_header(&header, socket->seq_number, socket->ack_number, 0, 0, 0, 0,
                           socket->curr_win_size, bytes_to_send % MICROTCP_MSS, 0, 0,
                           0, 0);
 
