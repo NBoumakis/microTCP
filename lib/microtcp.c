@@ -390,10 +390,6 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
     microtcp_header_t header;
     struct timeval timeout = {.tv_sec = 0, .tv_usec = MICROTCP_ACK_TIMEOUT_US};
 
-    enum State (*actions[2])(microtcp_sock_t *, int, int) = {slow_start,
-                                                             congest_avoid};
-    enum State state = SLOW_START;
-
     remaining = length;
     while (data_sent < length) {
         bytes_to_send = min(socket->curr_win_size, socket->cwnd, remaining);
@@ -459,8 +455,6 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
                     ++duplicate_ack;
                 }
             }
-
-            state = actions[state](socket, rcv_ret == -1, duplicate_ack);
         }
 
         /* Retransmissions */
