@@ -407,6 +407,7 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
                    buffer + data_sent + i * MICROTCP_MSS, MICROTCP_MSS);
 
             header.checksum = crc32(chunk, chunk_size);
+            memcpy(chunk, &header, sizeof(microtcp_header_t));
 
             send(socket->sd, chunk, chunk_size, flags);
 
@@ -432,6 +433,7 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
                    bytes_to_send % MICROTCP_MSS);
 
             header.checksum = crc32(chunk, chunk_size);
+            memcpy(chunk, &header, sizeof(microtcp_header_t));
 
             send(socket->sd, chunk, chunk_size, flags);
 
@@ -472,17 +474,43 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
 
 ssize_t microtcp_recv(microtcp_sock_t *socket, void *buffer, size_t length,
                       int flags) {
-    /* Your code here */
+    size_t remaining, data_recv, bytes_to_send, chunks_count, i,
+        chunk_size, max_ack = 0;
+    uint8_t *packet, *payload;
+    uint8_t duplicate_ack;
+    microtcp_header_t header;
+    struct timeval timeout = {.tv_sec = 0, .tv_usec = MICROTCP_ACK_TIMEOUT_US};
+
+    while (1) {
+        data_recv = recv(socket->sd, &header, sizeof(microtcp_header_t), 0);
+
+        packet = malloc(header.data_len + sizeof(microtcp_header_t));
+        payload = packet + sizeof(microtcp_header_t);
+
+        memcpy(packet, &header, sizeof(microtcp_header_t));
+        data_recv = recv(socket->sd, payload, header.data_len, 0);
+
+        if (data_recv == header.data_len &&
+            crc32(payload, header.data_len + sizeof(microtcp_header_t)) == header.checksum) {
+            memcpy(socket->recvbuf + socket->buf_fill_level, packet, header.data_len);
+
+            socket->curr_win_size -= header.data_len;
+            socket->ack_number += header.data_len;
+        }
+    }
+
+    memcpy(buffer, socket->recvbuf, min(socket->buf_fill_level, length));
 }
 
 /* Function to create a packet header given its fields. The user is responsible
  * for allocating space for the header and freeing it. Control parameters ACK,
  * RST, SYN, FIN are treated as booleans */
-static void packet_header(microtcp_header_t *header, uint32_t seq_number,
-                          uint32_t ack_number, int ack, int rst, int syn,
-                          int fin, uint16_t window, uint32_t data_len,
-                          uint32_t future0, uint32_t future1, uint32_t future2,
-                          uint32_t checksum) {
+static void
+packet_header(microtcp_header_t *header, uint32_t seq_number,
+              uint32_t ack_number, int ack, int rst, int syn,
+              int fin, uint16_t window, uint32_t data_len,
+              uint32_t future0, uint32_t future1, uint32_t future2,
+              uint32_t checksum) {
 
     header->seq_number = seq_number;
     header->ack_number = ack_number;
