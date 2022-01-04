@@ -399,7 +399,7 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
         chunk = malloc(chunk_size);
 
         for (i = 0; i < chunks_count; i++) {
-            packet_header(&header, seq_number, socket->ack_number, 0, 0, 0, 0,
+            packet_header(&header, socket->seq_number, socket->ack_number, 0, 0, 0, 0,
                           socket->curr_win_size, MICROTCP_MSS, 0, 0, 0, 0);
 
             memcpy(chunk, &header, sizeof(microtcp_header_t));
@@ -409,6 +409,8 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
             header.checksum = crc32(chunk, chunk_size);
 
             send(socket->sd, chunk, chunk_size, flags);
+
+            socket->seq_number += MICROTCP_MSS;
         }
 
         free(chunk);
@@ -432,6 +434,8 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
             header.checksum = crc32(chunk, chunk_size);
 
             send(socket->sd, chunk, chunk_size, flags);
+
+            socket->seq_number += bytes_to_send % MICROTCP_MSS;
 
             free(chunk);
         }
