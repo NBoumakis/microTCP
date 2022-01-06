@@ -484,19 +484,30 @@ ssize_t microtcp_recv(microtcp_sock_t *socket, void *buffer, size_t length,
     while (1) {
         data_recv = recv(socket->sd, &header, sizeof(microtcp_header_t), 0);
 
+        /* Allocate space for the whole packet */
         packet = malloc(header.data_len + sizeof(microtcp_header_t));
+        /* Pointer to the start of the packet payload */
         payload = packet + sizeof(microtcp_header_t);
 
         memcpy(packet, &header, sizeof(microtcp_header_t));
         data_recv = recv(socket->sd, payload, header.data_len, 0);
 
-        if (data_recv == header.data_len &&
+        if (header.seq_number == socket->ack_number && data_recv == header.data_len &&
             crc32(payload, header.data_len + sizeof(microtcp_header_t)) == header.checksum) {
             memcpy(socket->recvbuf + socket->buf_fill_level, packet, header.data_len);
 
             socket->curr_win_size -= header.data_len;
+            socket->buf_fill_level += header.data_len;
             socket->ack_number += header.data_len;
+
+            ++socket->packets_received;
+        } else {
+            ++socket->packets_lost;
         }
+
+        packet_header(&header, socket->seq_number, socket->ack_number, 1, 0, 0, 0, socket->curr_win_size, 0, 0, 0, 0, 0);
+        header.checksum = crc32(&header, sizeof(microtcp_header_t));
+        send(socket->sd, &header, sizeof(microtcp_header_t), 0);
     }
 
     memcpy(buffer, socket->recvbuf, min(socket->buf_fill_level, length));
