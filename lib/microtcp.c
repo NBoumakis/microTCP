@@ -174,6 +174,7 @@ int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
         return -1;
     }
 
+    socket->init_win_size = header.window;
     socket->curr_win_size = header.window;
     socket->ack_number = header.seq_number + 1;
 
@@ -258,6 +259,7 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
 
     ++socket->ack_number;
     socket->curr_win_size = header.window;
+    socket->init_win_size = header.window;
 
     socket->recvbuf = (uint8_t *)malloc(sizeof(uint8_t) * MICROTCP_RECVBUF_LEN);
 
