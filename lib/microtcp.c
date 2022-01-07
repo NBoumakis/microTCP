@@ -384,7 +384,7 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
 ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
                       size_t length, int flags) {
     size_t remaining, data_sent, bytes_to_send, chunks_count, i,
-        chunk_size, max_ack = 0;
+        chunk_size, max_ack = 0, init_seq;
     uint8_t *chunk;
     uint8_t duplicate_ack;
     microtcp_header_t header;
@@ -392,6 +392,8 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
 
     remaining = length;
     while (data_sent < length) {
+        init_seq = socket->seq_number;
+
         bytes_to_send = min(socket->curr_win_size, socket->cwnd, remaining);
         chunks_count = bytes_to_send / MICROTCP_MSS;
 
@@ -453,12 +455,14 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
 
             if (rcv_ret == -1) {
                 duplicate_ack = 0;
+                break;
             } else {
                 if (max_ack < header.ack_number) {
                     max_ack = header.ack_number;
                     duplicate_ack = 0;
                 } else if (max_ack == header.ack_number) {
-                    ++duplicate_ack;
+                    if (++duplicate_ack == 3)
+                        break;
                 }
             }
         }
@@ -466,8 +470,8 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
         /* Retransmissions */
         /* Update window */
         /* Update congestion control */
-        remaining -= bytes_to_send;
-        data_sent += bytes_to_send;
+        remaining -= max_ack - init_seq;
+        data_sent += max_ack - init_seq;
         /* XX */
     }
 }
