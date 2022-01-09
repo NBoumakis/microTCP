@@ -22,6 +22,7 @@
 #include "../utils/crc32.h"
 #include <errno.h>
 #include <netinet/ip.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,6 +34,19 @@
 #define SYN (1 << 14)
 #define FIN (1 << 15)
 
+size_t min2(size_t a, size_t b) {
+    if (a < b)
+        return a;
+    else
+        return b;
+}
+
+size_t min3(size_t a, size_t b, size_t c) {
+    size_t result = min2(a, b);
+
+    return min2(result, c);
+}
+
 enum State {
     SLOW_START,
     CONGESTION_AVOID
@@ -41,18 +55,11 @@ enum State {
 enum State slow_start(microtcp_sock_t *socket, int timeout, int duplicate_ack) {
     if (timeout) {
         socket->ssthresh = socket->cwnd / 2;
-        socket->cwnd = min(MICROTCP_MSS, socket->ssthresh);
+        socket->cwnd = min2(MICROTCP_MSS, socket->ssthresh);
 
         return SLOW_START;
     }
-    /*
-      if (duplicate_ack == 3) {
-          socket->ssthresh = socket->cwnd/2;
-          socket->cwnd = socket->ssthresh + 3*MICROTCP_MSS;
 
-          return CONGESTION_AVOID;
-      }
-  */
     if (socket->cwnd >= socket->ssthresh) {
         return CONGESTION_AVOID;
     } else {
@@ -66,7 +73,7 @@ enum State congest_avoid(microtcp_sock_t *socket, int timeout,
                          int duplicate_ack) {
     if (timeout) {
         socket->ssthresh = socket->cwnd / 2;
-        socket->cwnd = min(MICROTCP_MSS, socket->ssthresh);
+        socket->cwnd = min2(MICROTCP_MSS, socket->ssthresh);
 
         return SLOW_START;
     }
@@ -399,7 +406,7 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
     while (data_sent < length) {
         init_seq = socket->seq_number;
 
-        bytes_to_send = min(socket->curr_win_size, socket->cwnd, remaining);
+        bytes_to_send = min3(socket->curr_win_size, socket->cwnd, remaining);
         chunks_count = bytes_to_send / MICROTCP_MSS;
 
         chunk_size = MICROTCP_MSS + sizeof(microtcp_header_t);
@@ -541,7 +548,7 @@ ssize_t microtcp_recv(microtcp_sock_t *socket, void *buffer, size_t length,
         perror(" setsockopt ");
     }
 
-    to_user_size = min(socket->buf_fill_level, length);
+    to_user_size = min2(socket->buf_fill_level, length);
 
     memcpy(buffer, socket->recvbuf, to_user_size);
     memmove(socket->recvbuf, socket->recvbuf + to_user_size, socket->buf_fill_level - to_user_size);
