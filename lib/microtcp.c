@@ -392,6 +392,9 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
     microtcp_header_t header;
     struct timeval timeout = {.tv_sec = 0, .tv_usec = MICROTCP_ACK_TIMEOUT_US};
 
+    enum State ccstate = SLOW_START;
+    enum State (*actions[])(microtcp_sock_t *, int, int) = {slow_start, congest_avoid};
+
     remaining = length;
     while (data_sent < length) {
         init_seq = socket->seq_number;
@@ -456,16 +459,23 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
 
             if (rcv_ret == -1) {
                 duplicate_ack = 0;
+
+                ccstate = actions[ccstate](socket, 1, duplicate_ack);
                 break;
             } else {
                 if (max_ack < header.ack_number) {
                     max_ack = header.ack_number;
                     duplicate_ack = 0;
                 } else if (max_ack == header.ack_number) {
-                    if (++duplicate_ack == 3)
+                    if (++duplicate_ack == 3) {
+                        ccstate = actions[ccstate](socket, 0, duplicate_ack);
+
                         break;
+                    }
                 }
             }
+
+            ccstate = actions[ccstate](socket, 0, duplicate_ack);
         }
 
         /* Retransmissions */
