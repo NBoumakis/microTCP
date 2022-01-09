@@ -212,12 +212,15 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
     }
 
     if (connect(socket->sd, address, address_len) == -1) {
+        printf("Error: Accept: Syscall connect\n");
         return -1;
     }
 
     /*receive SYN=1, seq=N HEADER*/
-    if (recv(socket->sd, &header, MICROTCP_RECVBUF_LEN, 0) == -1)
+    if (recv(socket->sd, &header, MICROTCP_RECVBUF_LEN, 0) == -1) {
+        printf("Error: 3-way handshake: SYN: Receive packet\n");
         return -1;
+    }
 
     if (crc32(&header, sizeof(header)) != header.checksum) {
         printf("Error: 3-way handshake: SYN: Checksum\n");
@@ -235,14 +238,17 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
     header.checksum = crc32(&header, sizeof(header));
 
     /*send SYN=1, ACK=1 from control, seq=M,ack=N+1 HEADER*/
-    if (send(socket->sd, &header, sizeof(header), 0) == -1)
+    if (send(socket->sd, &header, sizeof(header), 0) == -1) {
+        printf("Error: 3-way handshake: SYN,ACK: Send packet\n");
         return -1;
-
+    }
     ++socket->seq_number;
 
     /*receive ACK=1 from control, seq=N+1,ack=M+1 HEADER*/
-    if (recv(socket->sd, &header, MICROTCP_RECVBUF_LEN, 0) == -1)
+    if (recv(socket->sd, &header, MICROTCP_RECVBUF_LEN, 0) == -1) {
+        printf("Error: 3-way handshake: ACK: Receive packet\n");
         return -1;
+    }
 
     if (crc32(&header, sizeof(header)) != header.checksum) {
         printf("Error: 3-way handshake: ACK: Checksum\n");
