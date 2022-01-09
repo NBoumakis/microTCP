@@ -404,7 +404,7 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
 
         for (i = 0; i < chunks_count; i++) {
             packet_header(&header, socket->seq_number, socket->ack_number, 0, 0, 0, 0,
-                          socket->curr_win_size, MICROTCP_MSS, 0, 0, 0, 0);
+                          socket->init_win_size - socket->buf_fill_level, MICROTCP_MSS, 0, 0, 0, 0);
 
             memcpy(chunk, &header, sizeof(microtcp_header_t));
             memcpy(chunk + sizeof(microtcp_header_t),
@@ -428,8 +428,7 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
             chunk = malloc(chunk_size);
 
             packet_header(&header, socket->seq_number, socket->ack_number, 0, 0, 0, 0,
-                          socket->curr_win_size, bytes_to_send % MICROTCP_MSS, 0, 0,
-                          0, 0);
+                          socket->init_win_size - socket->buf_fill_level, bytes_to_send % MICROTCP_MSS, 0, 0, 0, 0);
 
             memcpy(chunk, &header, sizeof(microtcp_header_t));
             memcpy(chunk + sizeof(microtcp_header_t),
@@ -485,10 +484,19 @@ ssize_t microtcp_recv(microtcp_sock_t *socket, void *buffer, size_t length,
     uint8_t *packet, *payload;
     uint8_t duplicate_ack;
     microtcp_header_t header;
-    struct timeval timeout = {.tv_sec = 0, .tv_usec = MICROTCP_ACK_TIMEOUT_US};
+    struct timeval timeout = {.tv_sec = 0, .tv_usec = 1};
 
     while (1) {
         data_recv = recv(socket->sd, &header, sizeof(microtcp_header_t), 0);
+
+        if (data_recv < 0) {
+            break;
+        }
+
+        if (setsockopt(socket->sd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                       sizeof(struct timeval)) < 0) {
+            perror(" setsockopt ");
+        }
 
         /* Allocate space for the whole packet */
         packet = malloc(header.data_len + sizeof(microtcp_header_t));
@@ -502,7 +510,6 @@ ssize_t microtcp_recv(microtcp_sock_t *socket, void *buffer, size_t length,
             crc32(payload, header.data_len + sizeof(microtcp_header_t)) == header.checksum) {
             memcpy(socket->recvbuf + socket->buf_fill_level, packet, header.data_len);
 
-            socket->curr_win_size -= header.data_len;
             socket->buf_fill_level += header.data_len;
             socket->ack_number += header.data_len;
 
@@ -511,9 +518,15 @@ ssize_t microtcp_recv(microtcp_sock_t *socket, void *buffer, size_t length,
             ++socket->packets_lost;
         }
 
-        packet_header(&header, socket->seq_number, socket->ack_number, 1, 0, 0, 0, socket->curr_win_size, 0, 0, 0, 0, 0);
+        packet_header(&header, socket->seq_number, socket->ack_number, 1, 0, 0, 0, socket->init_win_size - socket->buf_fill_level, 0, 0, 0, 0, 0);
         header.checksum = crc32(&header, sizeof(microtcp_header_t));
         send(socket->sd, &header, sizeof(microtcp_header_t), 0);
+    }
+
+    timeout.tv_usec = 0;
+    if (setsockopt(socket->sd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                   sizeof(struct timeval)) < 0) {
+        perror(" setsockopt ");
     }
 
     memcpy(buffer, socket->recvbuf, min(socket->buf_fill_level, length));
