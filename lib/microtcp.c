@@ -479,14 +479,14 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
 
 ssize_t microtcp_recv(microtcp_sock_t *socket, void *buffer, size_t length,
                       int flags) {
-    size_t remaining, data_recv, bytes_to_send, chunks_count, i,
-        chunk_size, max_ack = 0;
+    size_t received = 0, data_recv, bytes_to_send, chunks_count, i,
+           to_user_size, max_ack = 0;
     uint8_t *packet, *payload;
     uint8_t duplicate_ack;
     microtcp_header_t header;
     struct timeval timeout = {.tv_sec = 0, .tv_usec = 1};
 
-    while (1) {
+    while (received <= length) {
         data_recv = recv(socket->sd, &header, sizeof(microtcp_header_t), 0);
 
         if (data_recv < 0) {
@@ -497,6 +497,8 @@ ssize_t microtcp_recv(microtcp_sock_t *socket, void *buffer, size_t length,
                        sizeof(struct timeval)) < 0) {
             perror(" setsockopt ");
         }
+
+        received += data_recv;
 
         /* Allocate space for the whole packet */
         packet = malloc(header.data_len + sizeof(microtcp_header_t));
@@ -529,7 +531,14 @@ ssize_t microtcp_recv(microtcp_sock_t *socket, void *buffer, size_t length,
         perror(" setsockopt ");
     }
 
-    memcpy(buffer, socket->recvbuf, min(socket->buf_fill_level, length));
+    to_user_size = min(socket->buf_fill_level, length);
+
+    memcpy(buffer, socket->recvbuf, to_user_size);
+    memmove(socket->recvbuf, socket->recvbuf + to_user_size, socket->buf_fill_level - to_user_size);
+
+    socket->buf_fill_level -= to_user_size;
+
+    return to_user_size;
 }
 
 /* Function to create a packet header given its fields. The user is responsible
