@@ -156,7 +156,7 @@ int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
 
     /*send packet SYN*/
     packet_header(&header, socket->seq_number, 0, 0, 0, 1, 0, MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
-    header.checksum = crc32(&header, sizeof(header));
+    header.checksum = crc32((const uint8_t *)&header, sizeof(header));
     if (send(socket->sd, &header, sizeof(header), 0) < 0) {
         printf("Error: 3-way handshake: SYN: Send packet\n");
         return -1;
@@ -192,7 +192,7 @@ int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
 
     /*send ACK sto SYN-ACK*/
     packet_header(&header, socket->seq_number, socket->ack_number, 1, 0, 0, 0, MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
-    header.checksum = crc32(&header, sizeof(header));
+    header.checksum = crc32((const uint8_t *)&header, sizeof(header));
     if (send(socket->sd, &header, sizeof(header), 0) < 0) {
         printf("Error: 3-way handshake: ACK: Send packet\n");
         return -1;
@@ -211,8 +211,6 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
                     socklen_t address_len) {
 
     microtcp_header_t header;
-    struct sockaddr *client;
-    socklen_t addrlen = address_len;
 
     if (socket->state == INVALID) {
         printf("Socket invalid!\n");
@@ -238,7 +236,7 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
     socket->ack_number = header.seq_number + 1;
 
     packet_header(&header, socket->seq_number, socket->ack_number, 1, 0, 1, 0, MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
-    header.checksum = crc32(&header, sizeof(header));
+    header.checksum = crc32((const uint8_t *)&header, sizeof(header));
 
     /*send SYN=1, ACK=1 from control, seq=M,ack=N+1 HEADER*/
     if (sendto(socket->sd, &header, sizeof(header), 0, address, address_len) == -1) {
@@ -289,7 +287,7 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
         // Server side confirmed, packet FIN,ACK handled by microtcp_recv
         packet_header(&header, socket->seq_number, socket->ack_number, 1, 0, 0,
                       0, MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
-        header.checksum = crc32(&header, sizeof(header));
+        header.checksum = crc32((const uint8_t *)&header, sizeof(header));
 
         if (send(socket->sd, &header, sizeof(microtcp_header_t), 0) < 0) {
             printf("Error: Shutdown handshake: ACK: Send packet\n");
@@ -299,7 +297,7 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
 
         packet_header(&header, socket->seq_number, socket->ack_number, 1, 0, 0, 1,
                       MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
-        header.checksum = crc32(&header, sizeof(header));
+        header.checksum = crc32((const uint8_t *)&header, sizeof(header));
 
         if (send(socket->sd, &header, sizeof(microtcp_header_t), 0) < 0) {
             printf("Error: Shutdown handshake: FIN,ACK: Send packet\n");
@@ -335,9 +333,9 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
         // Invoked by client
         packet_header(&header, socket->seq_number, socket->ack_number, 1, 0, 0, 1,
                       MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
-        header.checksum = crc32(&header, sizeof(header));
+        header.checksum = crc32((const uint8_t *)&header, sizeof(header));
 
-        if (send(socket->sd, &header, sizeof(microtcp_header_t), 0)) {
+        if (send(socket->sd, &header, sizeof(microtcp_header_t), 0) < 0) {
             printf("Error: Shutdown handshake: FIN,ACK: Send number\n");
             return -1;
         }
@@ -383,7 +381,7 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
 
         packet_header(&header, socket->seq_number, socket->ack_number, 1, 0, 0, 0,
                       MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
-        header.checksum = crc32(&header, sizeof(header));
+        header.checksum = crc32((const uint8_t *)&header, sizeof(header));
 
         if (send(socket->sd, &header, sizeof(microtcp_header_t), 0) < 0) {
             printf("Error: Shutdown handshake: ACK: Send packet\n");
@@ -401,10 +399,10 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
 
 ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
                       size_t length, int flags) {
-    size_t remaining, data_sent, bytes_to_send, chunks_count, i,
-        chunk_size, max_ack = 0, init_seq;
+    size_t remaining, data_sent = 0, bytes_to_send = 0, chunks_count = 0, i = 0,
+                      chunk_size = 0, max_ack = 0, init_seq = 0;
     uint8_t *chunk;
-    uint8_t duplicate_ack;
+    uint8_t duplicate_ack = 0;
     microtcp_header_t header;
     struct timeval timeout = {.tv_sec = 0, .tv_usec = MICROTCP_ACK_TIMEOUT_US};
 
@@ -501,14 +499,14 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
         data_sent += max_ack - init_seq;
         /* XX */
     }
+
+    return data_sent;
 }
 
 ssize_t microtcp_recv(microtcp_sock_t *socket, void *buffer, size_t length,
                       int flags) {
-    size_t received = 0, data_recv, bytes_to_send, chunks_count, i,
-           to_user_size, max_ack = 0;
+    ssize_t received = 0, data_recv = 0, to_user_size;
     uint8_t *packet, *payload;
-    uint8_t duplicate_ack;
     microtcp_header_t header;
     struct timeval timeout = {.tv_sec = 0, .tv_usec = 1};
 
@@ -547,7 +545,7 @@ ssize_t microtcp_recv(microtcp_sock_t *socket, void *buffer, size_t length,
         }
 
         packet_header(&header, socket->seq_number, socket->ack_number, 1, 0, 0, 0, socket->init_win_size - socket->buf_fill_level, 0, 0, 0, 0, 0);
-        header.checksum = crc32(&header, sizeof(microtcp_header_t));
+        header.checksum = crc32((const uint8_t *)&header, sizeof(microtcp_header_t));
         send(socket->sd, &header, sizeof(microtcp_header_t), 0);
     }
 
@@ -609,5 +607,5 @@ static int check_checksum(microtcp_header_t *header) {
 
     header->checksum = 0;
 
-    return (crc32(header, sizeof(*header)) != tmp_checksum);
+    return (crc32((const uint8_t *)header, sizeof(*header)) != tmp_checksum);
 }
