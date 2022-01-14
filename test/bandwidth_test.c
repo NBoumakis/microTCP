@@ -52,7 +52,7 @@ int server_tcp(uint16_t listen_port, const char *file) {
     FILE *fp;
     int sock;
     int accepted;
-    int received;
+    ssize_t received;
     ssize_t written;
     ssize_t total_bytes = 0;
     socklen_t client_addr_len;
@@ -158,7 +158,7 @@ int server_microtcp(uint16_t listen_port, const char *file) {
     FILE *fp;
     microtcp_sock_t sock;
     int accepted;
-    int received;
+    ssize_t received;
     ssize_t written;
     ssize_t total_bytes = 0;
     socklen_t client_addr_len;
@@ -247,12 +247,9 @@ int server_microtcp(uint16_t listen_port, const char *file) {
 int client_tcp(const char *serverip, uint16_t server_port, const char *file) {
     uint8_t *buffer;
     int sock;
-    socklen_t client_addr_len;
     FILE *fp;
     size_t read_items = 0;
     ssize_t data_sent;
-
-    struct sockaddr *client_addr;
 
     /* Allocate memory for the application receive buffer */
     buffer = (uint8_t *)malloc(CHUNK_SIZE);
@@ -325,12 +322,9 @@ int client_tcp(const char *serverip, uint16_t server_port, const char *file) {
 int client_microtcp(const char *serverip, uint16_t server_port, const char *file) {
     uint8_t *buffer;
     microtcp_sock_t sock;
-    socklen_t client_addr_len;
     FILE *fp;
     size_t read_items = 0;
     ssize_t data_sent;
-
-    struct sockaddr *client_addr;
 
     /* Allocate memory for the application receive buffer */
     buffer = (uint8_t *)malloc(CHUNK_SIZE);
