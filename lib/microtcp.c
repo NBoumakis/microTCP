@@ -211,13 +211,8 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
         return -1;
     }
 
-    if (connect(socket->sd, address, address_len) == -1) {
-        printf("Error: Accept: Syscall connect\n");
-        return -1;
-    }
-
     /*receive SYN=1, seq=N HEADER*/
-    if (recv(socket->sd, &header, MICROTCP_RECVBUF_LEN, 0) == -1) {
+    if (recv(socket->sd, &header, sizeof(header), 0) == -1) {
         printf("Error: 3-way handshake: SYN: Receive packet\n");
         return -1;
     }
