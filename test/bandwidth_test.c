@@ -163,8 +163,7 @@ int server_microtcp(uint16_t listen_port, const char *file) {
     ssize_t total_bytes = 0;
     socklen_t client_addr_len;
 
-    struct sockaddr_in sin;
-    struct sockaddr client_addr;
+    struct sockaddr_in server;
     struct timespec start_time;
     struct timespec end_time;
 
@@ -185,13 +184,13 @@ int server_microtcp(uint16_t listen_port, const char *file) {
 
     sock = microtcp_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 
-    memset(&sin, 0, sizeof(struct sockaddr_in));
-    sin.sin_family = AF_INET;
-    sin.sin_port = htons(listen_port);
+    // memset(&server, 0, sizeof(struct sockaddr_in));
+    server.sin_family = AF_INET;
+    server.sin_port = htons(listen_port);
     /* Bind to all available network interfaces */
-    sin.sin_addr.s_addr = INADDR_ANY;
+    server.sin_addr.s_addr = INADDR_ANY;
 
-    if (microtcp_bind(&sock, (struct sockaddr *)&sin, sizeof(struct sockaddr_in)) == -1) {
+    if (microtcp_bind(&sock, (struct sockaddr *)&server, sizeof(struct sockaddr_in)) == -1) {
         perror("TCP bind");
         free(buffer);
         fclose(fp);
@@ -199,8 +198,11 @@ int server_microtcp(uint16_t listen_port, const char *file) {
     }
 
     /* Accept a connection from the client */
-    client_addr_len = sizeof(struct sockaddr);
-    accepted = microtcp_accept(&sock, &client_addr, &client_addr_len);
+
+    struct sockaddr_in client_addr;
+
+    client_addr_len = sizeof(client_addr);
+    accepted = microtcp_accept(&sock, &client_addr, client_addr_len);
     if (accepted < 0) {
         perror("TCP accept");
         free(buffer);

@@ -104,7 +104,7 @@ microtcp_sock_t microtcp_socket(int domain, int type, int protocol) {
 
     sock.seq_number = random();
 
-    sock.sd = socket(domain, SOCK_DGRAM, IPPROTO_UDP);
+    sock.sd = socket(domain, SOCK_DGRAM, 0);
 
     if (sock.sd == -1) {
         sock.state = INVALID;
@@ -130,6 +130,9 @@ int microtcp_bind(microtcp_sock_t *socket, const struct sockaddr *address,
                   socklen_t address_len) {
     if (socket->state == INVALID)
         return -1;
+
+    int strue = 1;
+    setsockopt(socket->sd, SOL_SOCKET, SO_REUSEADDR, &strue, sizeof(strue));
 
     if (bind(socket->sd, address, address_len) < 0) {
         return -1;
@@ -172,7 +175,7 @@ int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
     }
 
     /*elegxos Ack number poy elaba*/
-    if ((socket->seq_number + 1) != header.ack_number) {
+    if (socket->seq_number != header.ack_number) {
         printf("Error: 3-way handshake: SYN,ACK: Ack number\n");
         return -1;
     }
@@ -189,6 +192,7 @@ int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
 
     /*send ACK sto SYN-ACK*/
     packet_header(&header, socket->seq_number, socket->ack_number, 1, 0, 0, 0, MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
+    header.checksum = crc32(&header, sizeof(header));
     if (send(socket->sd, &header, sizeof(header), 0) < 0) {
         printf("Error: 3-way handshake: ACK: Send packet\n");
         return -1;
@@ -207,6 +211,8 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
                     socklen_t address_len) {
 
     microtcp_header_t header;
+    struct sockaddr *client;
+    socklen_t addrlen = address_len;
 
     if (socket->state == INVALID) {
         printf("Socket invalid!\n");
@@ -214,7 +220,7 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
     }
 
     /*receive SYN=1, seq=N HEADER*/
-    if (recv(socket->sd, &header, sizeof(header), 0) == -1) {
+    if (recvfrom(socket->sd, &header, sizeof(header), 0, address, &address_len) == -1) {
         printf("Error: 3-way handshake: SYN: Receive packet\n");
         return -1;
     }
@@ -235,14 +241,14 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
     header.checksum = crc32(&header, sizeof(header));
 
     /*send SYN=1, ACK=1 from control, seq=M,ack=N+1 HEADER*/
-    if (send(socket->sd, &header, sizeof(header), 0) == -1) {
+    if (sendto(socket->sd, &header, sizeof(header), 0, address, address_len) == -1) {
         printf("Error: 3-way handshake: SYN,ACK: Send packet\n");
         return -1;
     }
     ++socket->seq_number;
 
     /*receive ACK=1 from control, seq=N+1,ack=M+1 HEADER*/
-    if (recv(socket->sd, &header, MICROTCP_RECVBUF_LEN, 0) == -1) {
+    if (recvfrom(socket->sd, &header, MICROTCP_RECVBUF_LEN, 0, address, &address_len) == -1) {
         printf("Error: 3-way handshake: ACK: Receive packet\n");
         return -1;
     }
