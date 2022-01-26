@@ -34,7 +34,8 @@
 #define SYN (1 << 14)
 #define FIN (1 << 15)
 
-static int check_checksum(microtcp_header_t *);
+static int check_checksum_header(microtcp_header_t *);
+static int check_checksum_packet(uint8_t *, uint32_t, uint32_t);
 
 size_t min2(size_t a, size_t b) {
     if (a < b)
@@ -169,7 +170,7 @@ int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
         return -1;
     }
 
-    if (check_checksum(&header)) {
+    if (check_checksum_header(&header)) {
         printf("Error: 3-way handshake: SYN,ACK: Checksum\n");
         return -1;
     }
@@ -223,7 +224,7 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
         return -1;
     }
 
-    if (check_checksum(&header)) {
+    if (check_checksum_header(&header)) {
         printf("Error: 3-way handshake: SYN: Checksum\n");
         return -1;
     }
@@ -251,7 +252,7 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
         return -1;
     }
 
-    if (check_checksum(&header)) {
+    if (check_checksum_header(&header)) {
         printf("Error: 3-way handshake: ACK: Checksum\n");
         return -1;
     }
@@ -270,6 +271,8 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
         printf("Error: 3-way handshake: ACK: Ack number\n");
         return -1;
     }
+
+    connect(socket->sd, address, address_len);
 
     ++socket->ack_number;
     socket->curr_win_size = header.window;
@@ -310,7 +313,7 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
             return -1;
         }
 
-        if (check_checksum(&header)) {
+        if (check_checksum_header(&header)) {
             printf("Error: Shutdown handshake: ACK: Checksum\n");
             return -1;
         }
@@ -346,7 +349,7 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
             return -1;
         }
 
-        if (check_checksum(&header)) {
+        if (check_checksum_header(&header)) {
             printf("Error: Shutdown handshake: ACK: Checksum\n");
             return -1;
         }
@@ -368,7 +371,7 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
             return -1;
         }
 
-        if (check_checksum(&header)) {
+        if (check_checksum_header(&header)) {
             printf("Error: Shutdown handshake: ACK: Checksum\n");
             return -1;
         }
@@ -507,11 +510,15 @@ ssize_t microtcp_recv(microtcp_sock_t *socket, void *buffer, size_t length,
                       int flags) {
     ssize_t received = 0, data_recv = 0, to_user_size;
     uint8_t *packet, *payload;
-    microtcp_header_t header;
-    struct timeval timeout = {.tv_sec = 0, .tv_usec = 1};
+    uint32_t tmp_checksum;
+    microtcp_header_t *header;
+    struct timeval timeout = {.tv_sec = 1, .tv_usec = 1};
+
+    /* Allocate space for the whole packet */
+    packet = malloc(MICROTCP_MSS + sizeof(microtcp_header_t));
 
     while (received <= length) {
-        data_recv = recv(socket->sd, &header, sizeof(microtcp_header_t), 0);
+        data_recv = recv(socket->sd, packet, MICROTCP_MSS + sizeof(microtcp_header_t), 0);
 
         if (data_recv < 0) {
             break;
@@ -524,29 +531,31 @@ ssize_t microtcp_recv(microtcp_sock_t *socket, void *buffer, size_t length,
 
         received += data_recv;
 
-        /* Allocate space for the whole packet */
-        packet = malloc(header.data_len + sizeof(microtcp_header_t));
         /* Pointer to the start of the packet payload */
         payload = packet + sizeof(microtcp_header_t);
 
-        memcpy(packet, &header, sizeof(microtcp_header_t));
-        data_recv = recv(socket->sd, payload, header.data_len, 0);
+        header = (microtcp_header_t *)packet;
 
-        if (header.seq_number == socket->ack_number && data_recv == header.data_len &&
-            !check_checksum(&header)) {
-            memcpy(socket->recvbuf + socket->buf_fill_level, packet, header.data_len);
+        tmp_checksum = header->checksum;
+        header->checksum = 0;
 
-            socket->buf_fill_level += header.data_len;
-            socket->ack_number += header.data_len;
+        data_recv -= sizeof(microtcp_header_t);
+
+        if (header->seq_number == socket->ack_number && data_recv == header->data_len &&
+            check_checksum_packet(packet, header->data_len + sizeof(microtcp_header_t), tmp_checksum)) {
+            memcpy(socket->recvbuf + socket->buf_fill_level, payload, header->data_len);
+
+            socket->buf_fill_level += header->data_len;
+            socket->ack_number += header->data_len;
 
             ++socket->packets_received;
         } else {
             ++socket->packets_lost;
         }
 
-        packet_header(&header, socket->seq_number, socket->ack_number, 1, 0, 0, 0, socket->init_win_size - socket->buf_fill_level, 0, 0, 0, 0, 0);
-        header.checksum = crc32((const uint8_t *)&header, sizeof(microtcp_header_t));
-        send(socket->sd, &header, sizeof(microtcp_header_t), 0);
+        packet_header(header, socket->seq_number, socket->ack_number, 1, 0, 0, 0, socket->init_win_size - socket->buf_fill_level, 0, 0, 0, 0, 0);
+        header->checksum = crc32((const uint8_t *)header, sizeof(microtcp_header_t));
+        send(socket->sd, header, sizeof(microtcp_header_t), 0);
     }
 
     timeout.tv_usec = 0;
@@ -602,10 +611,14 @@ packet_header(microtcp_header_t *header, uint32_t seq_number,
     }
 }
 
-static int check_checksum(microtcp_header_t *header) {
+static int check_checksum_header(microtcp_header_t *header) {
     uint32_t tmp_checksum = header->checksum;
 
     header->checksum = 0;
 
     return (crc32((const uint8_t *)header, sizeof(*header)) != tmp_checksum);
+}
+
+static int check_checksum_packet(uint8_t *packet, uint32_t packet_size, uint32_t correct_checksum) {
+    return (crc32(packet, packet_size) == correct_checksum);
 }
