@@ -22,6 +22,7 @@
 #include "../utils/crc32.h"
 #include <errno.h>
 #include <netinet/ip.h>
+#include <poll.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -288,6 +289,7 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
 
     if (socket->state == CLOSING_BY_PEER) {
         // Server side confirmed, packet FIN,ACK handled by microtcp_recv
+        ++socket->ack_number;
         packet_header(&header, socket->seq_number, socket->ack_number, 1, 0, 0,
                       0, MICROTCP_WIN_SIZE, 0, 0, 0, 0, 0);
         header.checksum = crc32((const uint8_t *)&header, sizeof(header));
@@ -358,7 +360,7 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
             printf("Error: Shutdown handshake: ACK: Control fields\n");
             return -1;
         }
-
+        // Expect header.ack = X+1 == SEQ
         if (socket->seq_number != header.ack_number) {
             printf("Error: Shutdown handshake: ACK: Ack number\n");
             return -1;
@@ -512,22 +514,20 @@ ssize_t microtcp_recv(microtcp_sock_t *socket, void *buffer, size_t length,
     uint8_t *packet, *payload;
     uint32_t tmp_checksum;
     microtcp_header_t *header;
-    struct timeval timeout = {.tv_sec = 1, .tv_usec = 1};
+    struct pollfd plfd[1];
+
+    if (socket->state == CLOSING_BY_PEER) {
+        return -1;
+    }
+
+    plfd[0].fd = socket->sd;
+    plfd[0].events = POLLIN;
 
     /* Allocate space for the whole packet */
     packet = malloc(MICROTCP_MSS + sizeof(microtcp_header_t));
 
-    while (received <= length) {
+    do {
         data_recv = recv(socket->sd, packet, MICROTCP_MSS + sizeof(microtcp_header_t), 0);
-
-        if (data_recv < 0) {
-            break;
-        }
-
-        if (setsockopt(socket->sd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
-                       sizeof(struct timeval)) < 0) {
-            perror(" setsockopt ");
-        }
 
         received += data_recv;
 
@@ -553,16 +553,15 @@ ssize_t microtcp_recv(microtcp_sock_t *socket, void *buffer, size_t length,
             ++socket->packets_lost;
         }
 
+        if (header->control == (FIN | ACK)) {
+            socket->state = CLOSING_BY_PEER;
+            break;
+        }
+
         packet_header(header, socket->seq_number, socket->ack_number, 1, 0, 0, 0, socket->init_win_size - socket->buf_fill_level, 0, 0, 0, 0, 0);
         header->checksum = crc32((const uint8_t *)header, sizeof(microtcp_header_t));
         send(socket->sd, header, sizeof(microtcp_header_t), 0);
-    }
-
-    timeout.tv_usec = 0;
-    if (setsockopt(socket->sd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
-                   sizeof(struct timeval)) < 0) {
-        perror(" setsockopt ");
-    }
+    } while (received <= length && poll(plfd, 0, 0) > 0);
 
     to_user_size = min2(socket->buf_fill_level, length);
 
