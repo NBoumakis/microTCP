@@ -30,10 +30,32 @@
 #include <time.h>
 #include <unistd.h>
 
+#define DEBUG
+
 #define ACK (1 << 12)
 #define RST (1 << 13)
 #define SYN (1 << 14)
 #define FIN (1 << 15)
+
+#ifdef DEBUG
+static void debugInfo(microtcp_sock_t *socket) {
+    printf("Ack number: %lu\n", socket->ack_number);
+    printf("Seq number: %lu\n", socket->seq_number);
+
+    printf("ssthresh: %lu\n", socket->ssthresh);
+    printf("cwnd: %lu (%lu MSS) \n", socket->cwnd, socket->cwnd / MICROTCP_MSS);
+
+    printf("Fill level: %lu\n", socket->buf_fill_level);
+    printf("Bytes sent/received/lost: %lu/%lu/%lu\n", socket->bytes_send, socket->bytes_received, socket->bytes_lost);
+
+    printf("Init win size: %lu\n", socket->init_win_size);
+    printf("Curr win size: %lu\n", socket->curr_win_size);
+
+    printf("Packets sent/received/lost: %lu/%lu/%lu\n", socket->packets_send, socket->packets_received, socket->packets_lost);
+
+    printf("\n");
+}
+#endif
 
 static int check_checksum_header(microtcp_header_t *);
 static int check_checksum_packet(uint8_t *, uint32_t, uint32_t);
@@ -416,6 +438,13 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
 
     remaining = length;
     while (data_sent < length) {
+#ifdef DEBUG
+        printf("=======Transmission round=======\n");
+
+        printf("Before transmission\n");
+        printf("%d\n", ccstate);
+        debugInfo(socket);
+#endif
         init_seq = socket->seq_number;
 
         bytes_to_send = min3(socket->curr_win_size, socket->cwnd, remaining);
@@ -479,7 +508,12 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
             if (rcv_ret == -1) {
                 duplicate_ack = 0;
 
-                ccstate = actions[ccstate](socket, 1, duplicate_ack);
+
+#ifdef DEBUG
+                printf("Timeout\n");
+                printf("%d\n", ccstate);
+                debugInfo(socket);
+#endif
                 break;
             } else {
                 if (max_ack < header.ack_number) {
@@ -489,12 +523,26 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
                     if (++duplicate_ack == 3) {
                         ccstate = actions[ccstate](socket, 0, duplicate_ack);
 
+#ifdef DEBUG
+                        printf("3-duplicate ack\n");
+                        printf("%d\n", ccstate);
+                        debugInfo(socket);
+#endif
+
                         break;
                     }
                 }
             }
 
             ccstate = actions[ccstate](socket, 0, duplicate_ack);
+
+#ifdef DEBUG
+            printf("Duplicate ACK %d\n", duplicate_ack);
+
+            printf("Normal\n");
+            printf("%d\n", ccstate);
+            debugInfo(socket);
+#endif
         }
 
         /* Retransmissions */
