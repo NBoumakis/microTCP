@@ -59,6 +59,8 @@ static void debugInfo(microtcp_sock_t *socket) {
 
 static int check_checksum_header(microtcp_header_t *);
 static int check_checksum_packet(uint8_t *, uint32_t, uint32_t);
+static void update_congestion_control(microtcp_sock_t *, int, int, size_t);
+static size_t roundUp(size_t, size_t);
 
 size_t min2(size_t a, size_t b) {
     if (a < b)
@@ -73,47 +75,6 @@ size_t min3(size_t a, size_t b, size_t c) {
     return min2(result, c);
 }
 
-enum State {
-    SLOW_START,
-    CONGESTION_AVOID
-};
-
-enum State slow_start(microtcp_sock_t *socket, int timeout, int duplicate_ack) {
-    if (timeout) {
-        socket->ssthresh = socket->cwnd / 2;
-        socket->cwnd = min2(MICROTCP_MSS, socket->ssthresh);
-
-        return SLOW_START;
-    }
-
-    if (socket->cwnd >= socket->ssthresh) {
-        return CONGESTION_AVOID;
-    } else {
-        socket->cwnd += MICROTCP_MSS;
-
-        return SLOW_START;
-    }
-}
-
-enum State congest_avoid(microtcp_sock_t *socket, int timeout,
-                         int duplicate_ack) {
-    if (timeout) {
-        socket->ssthresh = socket->cwnd / 2;
-        socket->cwnd = min2(MICROTCP_MSS, socket->ssthresh);
-
-        return SLOW_START;
-    }
-
-    if (duplicate_ack == 3) {
-        socket->ssthresh = socket->cwnd / 2;
-        socket->cwnd = socket->cwnd / 2 + MICROTCP_MSS;
-    } else if (duplicate_ack == 0) {
-        socket->cwnd += MICROTCP_MSS * (MICROTCP_MSS / socket->cwnd);
-    }
-
-    return CONGESTION_AVOID;
-}
-
 static void packet_header(microtcp_header_t *header, uint32_t seq_number,
                           uint32_t ack_number, int ack, int rst, int syn,
                           int fin, uint16_t window, uint32_t data_len,
@@ -122,7 +83,7 @@ static void packet_header(microtcp_header_t *header, uint32_t seq_number,
 
 microtcp_sock_t microtcp_socket(int domain, int type, int protocol) {
     microtcp_sock_t sock;
-    //  srand(time(NULL));
+    srand(time(NULL));
 
     sock.state = UNKNOWN;
 
@@ -134,7 +95,7 @@ microtcp_sock_t microtcp_socket(int domain, int type, int protocol) {
         sock.state = INVALID;
     }
 
-    sock.cwnd = MICROTCP_MSS;
+    sock.cwnd = MICROTCP_INIT_CWND;
     sock.ssthresh = MICROTCP_INIT_SSTHRESH;
 
     sock.packets_lost = 0;
@@ -187,9 +148,23 @@ int microtcp_connect(microtcp_sock_t *socket, const struct sockaddr *address,
     }
     ++socket->seq_number;
 
+    struct timeval timeout = {.tv_sec = 0, .tv_usec = MICROTCP_ACK_TIMEOUT_US};
+    if (setsockopt(socket->sd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                   sizeof(struct timeval)) < 0) {
+        perror(" setsockopt ");
+        return -1;
+    }
+
     /*receive packet SYN-ACK */
     if (recv(socket->sd, &header, sizeof(header), 0) < 0) {
         printf("Error: 3-way handshake: SYN,ACK: Receive packet\n");
+        return -1;
+    }
+
+    timeout.tv_usec = 0;
+    if (setsockopt(socket->sd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                   sizeof(struct timeval)) < 0) {
+        perror(" setsockopt ");
         return -1;
     }
 
@@ -269,9 +244,23 @@ int microtcp_accept(microtcp_sock_t *socket, struct sockaddr *address,
     }
     ++socket->seq_number;
 
+    struct timeval timeout = {.tv_sec = 0, .tv_usec = MICROTCP_ACK_TIMEOUT_US};
+    if (setsockopt(socket->sd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                   sizeof(struct timeval)) < 0) {
+        perror(" setsockopt ");
+        return -1;
+    }
+
     /*receive ACK=1 from control, seq=N+1,ack=M+1 HEADER*/
-    if (recvfrom(socket->sd, &header, MICROTCP_RECVBUF_LEN, 0, address, &address_len) == -1) {
+    if (recvfrom(socket->sd, &header, sizeof(header), 0, address, &address_len) == -1) {
         printf("Error: 3-way handshake: ACK: Receive packet\n");
+        return -1;
+    }
+
+    timeout.tv_usec = 0;
+    if (setsockopt(socket->sd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                   sizeof(struct timeval)) < 0) {
+        perror(" setsockopt ");
         return -1;
     }
 
@@ -332,8 +321,22 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
         }
         ++socket->seq_number;
 
+        struct timeval timeout = {.tv_sec = 0, .tv_usec = MICROTCP_ACK_TIMEOUT_US};
+        if (setsockopt(socket->sd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                       sizeof(struct timeval)) < 0) {
+            perror(" setsockopt ");
+            return -1;
+        }
+
         if (recv(socket->sd, &header, sizeof(microtcp_header_t), 0) < 0) {
             printf("Error: Shutdown handshake: ACK: Receive packet\n");
+            return -1;
+        }
+
+        timeout.tv_usec = 0;
+        if (setsockopt(socket->sd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                       sizeof(struct timeval)) < 0) {
+            perror(" setsockopt ");
             return -1;
         }
 
@@ -367,6 +370,12 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
             return -1;
         }
         ++socket->seq_number;
+        struct timeval timeout = {.tv_sec = 0, .tv_usec = MICROTCP_ACK_TIMEOUT_US};
+        if (setsockopt(socket->sd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                       sizeof(struct timeval)) < 0) {
+            perror(" setsockopt ");
+            return -1;
+        }
 
         if (recv(socket->sd, &header, sizeof(microtcp_header_t), 0) < 0) {
             printf("Error: Shutdown handshake: ACK: Receive packet\n");
@@ -392,6 +401,13 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
 
         if (recv(socket->sd, &header, sizeof(microtcp_header_t), 0) < 0) {
             printf("Error: Shutdown handshake: FIN,ACK: Receive packet\n");
+            return -1;
+        }
+
+        timeout.tv_usec = 0;
+        if (setsockopt(socket->sd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                       sizeof(struct timeval)) < 0) {
+            perror(" setsockopt ");
             return -1;
         }
 
@@ -427,27 +443,24 @@ int microtcp_shutdown(microtcp_sock_t *socket, int how) {
 ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
                       size_t length, int flags) {
     size_t remaining, data_sent = 0, bytes_to_send = 0, chunks_count = 0, i = 0,
-                      chunk_size = 0, max_ack = 0, init_seq = 0;
+                      chunk_size = 0, max_ack = 0, init_seq = socket->seq_number, transmission_cwnd;
     uint8_t *chunk;
     uint8_t duplicate_ack = 0;
     microtcp_header_t header;
     struct timeval timeout = {.tv_sec = 0, .tv_usec = MICROTCP_ACK_TIMEOUT_US};
 
-    enum State ccstate = SLOW_START;
-    enum State (*actions[])(microtcp_sock_t *, int, int) = {slow_start, congest_avoid};
-
     remaining = length;
     while (data_sent < length) {
+        transmission_cwnd = socket->cwnd;
+
 #ifdef DEBUG
         printf("=======Transmission round=======\n");
 
         printf("Before transmission\n");
-        printf("%d\n", ccstate);
         debugInfo(socket);
 #endif
-        init_seq = socket->seq_number;
 
-        bytes_to_send = min3(socket->curr_win_size, socket->cwnd, remaining);
+        bytes_to_send = min3(socket->curr_win_size, transmission_cwnd, remaining);
         chunks_count = bytes_to_send / MICROTCP_MSS;
 
         chunk_size = MICROTCP_MSS + sizeof(microtcp_header_t);
@@ -459,7 +472,7 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
 
             memcpy(chunk, &header, sizeof(microtcp_header_t));
             memcpy(chunk + sizeof(microtcp_header_t),
-                   buffer + data_sent + i * MICROTCP_MSS, MICROTCP_MSS);
+                   buffer + (socket->seq_number - init_seq), MICROTCP_MSS);
 
             header.checksum = crc32(chunk, chunk_size);
             memcpy(chunk, &header, sizeof(microtcp_header_t));
@@ -483,7 +496,7 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
 
             memcpy(chunk, &header, sizeof(microtcp_header_t));
             memcpy(chunk + sizeof(microtcp_header_t),
-                   buffer + data_sent + (chunks_count - 1) * MICROTCP_MSS,
+                   buffer + (socket->seq_number - init_seq),
                    bytes_to_send % MICROTCP_MSS);
 
             header.checksum = crc32(chunk, chunk_size);
@@ -496,61 +509,104 @@ ssize_t microtcp_send(microtcp_sock_t *socket, const void *buffer,
             free(chunk);
         }
 
+        /* Those chunks are header only and are used to find out when the congestion window stops being 0.
+         * Causes problems, disabled */
+        /* while (chunks_count < min2(transmission_cwnd / MICROTCP_MSS, roundUp(remaining, MICROTCP_MSS) / MICROTCP_MSS)) {
+            packet_header(&header, socket->seq_number, socket->ack_number, 0, 0, 0, 0,
+                          socket->init_win_size - socket->buf_fill_level, 0, 1, 0, 0, 0);
+
+            header.checksum = crc32(&header, sizeof(microtcp_header_t));
+
+            send(socket->sd, &header, sizeof(microtcp_header_t), flags);
+            perror("CC packets");
+            ++chunks_count;
+        }*/
+
         /* Get the ACKs */
         if (setsockopt(socket->sd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
                        sizeof(struct timeval)) < 0) {
             perror(" setsockopt ");
         }
 
-        for (i = 0; i < chunks_count; i++) {
+        for (i = 0; i < chunks_count && max_ack < socket->seq_number; i++) {
             ssize_t rcv_ret = recv(socket->sd, &header, sizeof(microtcp_header_t), 0);
 
-            if (rcv_ret == -1) {
-                duplicate_ack = 0;
-
-
-#ifdef DEBUG
-                printf("Timeout\n");
-                printf("%d\n", ccstate);
-                debugInfo(socket);
-#endif
-                break;
-            } else {
+            if (rcv_ret != -1) {
                 if (max_ack < header.ack_number) {
                     max_ack = header.ack_number;
                     duplicate_ack = 0;
-                } else if (max_ack == header.ack_number) {
+
+                    update_congestion_control(socket, 0, duplicate_ack, transmission_cwnd);
+
+#ifdef DEBUG
+                    printf("Duplicate ACK %d\n", duplicate_ack);
+
+                    printf("Normal %ld\n", remaining);
+                    printf("Max ack %ld\n", max_ack);
+                    printf("Ack: %d", header.ack_number);
+
+                    debugInfo(socket);
+#endif
+                } else if (max_ack == header.ack_number && header.future_use0 == 0) {
                     if (++duplicate_ack == 3) {
-                        ccstate = actions[ccstate](socket, 0, duplicate_ack);
+                        update_congestion_control(socket, 0, duplicate_ack, transmission_cwnd);
 
 #ifdef DEBUG
                         printf("3-duplicate ack\n");
-                        printf("%d\n", ccstate);
+                        printf("Max ack %ld\n", max_ack);
                         debugInfo(socket);
 #endif
 
                         break;
                     }
-                }
-            }
-
-            ccstate = actions[ccstate](socket, 0, duplicate_ack);
 
 #ifdef DEBUG
-            printf("Duplicate ACK %d\n", duplicate_ack);
-
-            printf("Normal\n");
-            printf("%d\n", ccstate);
-            debugInfo(socket);
+                    printf("Duplicate ACK %d\n", duplicate_ack);
+                    printf("Max ack %ld\n", max_ack);
+                    printf("Ack: %d\n", header.ack_number);
+                    debugInfo(socket);
 #endif
+                } else if (max_ack == header.ack_number && header.future_use0 == 1) {
+
+#ifdef DEBUG
+                    printf("CC packet - Duplicate ACK %d\n", duplicate_ack);
+                    printf("Max ack %ld\n", max_ack);
+                    printf("Ack: %d", header.ack_number);
+                    debugInfo(socket);
+#endif
+                }
+            } else {
+                duplicate_ack = 0;
+
+                update_congestion_control(socket, 1, 0, transmission_cwnd);
+
+#ifdef DEBUG
+                printf("Timeout %ld\n", remaining);
+                printf("Max ack %ld\n", max_ack);
+                printf("%d, EINVAL: %d", errno, EWOULDBLOCK);
+
+                debugInfo(socket);
+#endif
+                break;
+            }
         }
 
         /* Retransmissions */
         /* Update window */
         /* Update congestion control */
-        remaining -= max_ack - init_seq;
-        data_sent += max_ack - init_seq;
+        socket->cwnd = roundUp(socket->cwnd, MICROTCP_MSS);
+        if (max_ack != 0) {
+            socket->seq_number = max_ack;
+            remaining = length - (max_ack - init_seq);
+            data_sent = max_ack - init_seq;
+        }
         /* XX */
+    }
+
+    timeout.tv_usec = 0;
+    if (setsockopt(socket->sd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                   sizeof(struct timeval)) < 0) {
+        perror(" setsockopt ");
     }
 
     return data_sent;
@@ -574,11 +630,23 @@ ssize_t microtcp_recv(microtcp_sock_t *socket, void *buffer, size_t length,
     /* Allocate space for the whole packet */
     packet = malloc(MICROTCP_MSS + sizeof(microtcp_header_t));
 
+    if (packet == NULL) {
+        printf("Malloc failed\n");
+        return -1;
+    }
+
+#ifdef DEBUG
+    printf("========Receive round========\n");
+#endif
     do {
         data_recv = recv(socket->sd, packet, MICROTCP_MSS + sizeof(microtcp_header_t), 0);
 
-        received += data_recv;
+#ifdef DEBUG
+        printf("After receive packet\n");
+        printf("Errno: %d\n", errno);
 
+        debugInfo(socket);
+#endif
         /* Pointer to the start of the packet payload */
         payload = packet + sizeof(microtcp_header_t);
 
@@ -592,24 +660,31 @@ ssize_t microtcp_recv(microtcp_sock_t *socket, void *buffer, size_t length,
         if (header->seq_number == socket->ack_number && data_recv == header->data_len &&
             check_checksum_packet(packet, header->data_len + sizeof(microtcp_header_t), tmp_checksum)) {
             memcpy(socket->recvbuf + socket->buf_fill_level, payload, header->data_len);
-
+            received += data_recv;
             socket->buf_fill_level += header->data_len;
             socket->ack_number += header->data_len;
 
             ++socket->packets_received;
+
+            if (header->control == (FIN | ACK)) {
+                socket->state = CLOSING_BY_PEER;
+                break;
+            }
         } else {
             ++socket->packets_lost;
         }
 
-        if (header->control == (FIN | ACK)) {
-            socket->state = CLOSING_BY_PEER;
-            break;
-        }
-
-        packet_header(header, socket->seq_number, socket->ack_number, 1, 0, 0, 0, socket->init_win_size - socket->buf_fill_level, 0, 0, 0, 0, 0);
+        packet_header(header, socket->seq_number, socket->ack_number, 1, 0, 0, 0, socket->init_win_size - socket->buf_fill_level, 0, header->future_use0, 0, 0, 0);
         header->checksum = crc32((const uint8_t *)header, sizeof(microtcp_header_t));
         send(socket->sd, header, sizeof(microtcp_header_t), 0);
-    } while (received <= length && poll(plfd, 0, 0) > 0);
+
+#ifdef DEBUG
+        printf("After send Ack\n");
+        printf("Errno: %d\n", errno);
+
+        debugInfo(socket);
+#endif
+    } while (received <= length && (poll(plfd, 1, 0) > 0 || socket->buf_fill_level == 0));
 
     to_user_size = min2(socket->buf_fill_level, length);
 
@@ -617,6 +692,9 @@ ssize_t microtcp_recv(microtcp_sock_t *socket, void *buffer, size_t length,
     memmove(socket->recvbuf, socket->recvbuf + to_user_size, socket->buf_fill_level - to_user_size);
 
     socket->buf_fill_level -= to_user_size;
+    free(packet);
+    packet = NULL;
+    header = NULL;
 
     return to_user_size;
 }
@@ -668,4 +746,29 @@ static int check_checksum_header(microtcp_header_t *header) {
 
 static int check_checksum_packet(uint8_t *packet, uint32_t packet_size, uint32_t correct_checksum) {
     return (crc32(packet, packet_size) == correct_checksum);
+}
+
+static void
+update_congestion_control(microtcp_sock_t *socket, int timeout, int ack_count, size_t transmission_cwnd) {
+    if (timeout) {
+        socket->ssthresh = transmission_cwnd / 2;
+        socket->cwnd = MICROTCP_MSS;
+    } else if (ack_count == 3) {
+        socket->ssthresh = transmission_cwnd / 2;
+        socket->cwnd = transmission_cwnd / 2 + MICROTCP_MSS;
+    } else if (ack_count == 0) {
+        if (transmission_cwnd < socket->ssthresh) {
+            socket->cwnd += MICROTCP_MSS;
+        } else {
+            socket->cwnd += MICROTCP_MSS * MICROTCP_MSS / transmission_cwnd;
+        }
+    }
+}
+
+static size_t roundUp(size_t numToRound, size_t multiple) {
+    size_t remainder = numToRound % multiple;
+    if (remainder == 0)
+        return numToRound;
+
+    return numToRound + multiple - remainder;
 }
